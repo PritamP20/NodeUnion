@@ -33,35 +33,18 @@ impl Default for NodeMetricsSnapshot {
 }
 
 #[derive(Debug)]
-// Central mutable daemon state shared by API, heartbeat, and detector tasks.
 pub struct AppState {
     pub node_id: String,
-    // Stable identity of this daemon node.
-
-    pub node_status: NodeStatus,
-    // High-level node mode: Idle, Busy, Draining, Preempting.
-
-    pub is_idle: bool,
-    // Fast boolean flag used in scheduling filters and heartbeat.
-
-    pub consecutive_preempt_spikes: usize,
-    // Counts consecutive high-CPU samples to decide preemption trigger.
-
-    pub idle_until_epoch_secs: Option<u64>,
-    // Optional estimated time until machine is expected to stay idle.
-
-    pub cpu_window: VecDeque<f32>,
-    // Sliding window of recent CPU usage samples.
-
-    pub metrics: NodeMetricsSnapshot,
-    // Latest resource snapshot.
-
-    pub running_chunks: HashMap<String, RunningChunk>,
-    // Active chunk map keyed by chunk_id.
+    pub node_status: NodeStatus, // Idle, Busy, Draining, Preempting.
+    pub is_idle: bool, // Fast boolean flag used in scheduling filters and heartbeat.
+    pub consecutive_preempt_spikes: usize, // Counts consecutive high-CPU samples to decide preemption trigger.
+    pub idle_until_epoch_secs: Option<u64>, // Optional estimated time until machine is expected to stay idle.
+    pub cpu_window: VecDeque<f32>, // Sliding window of recent CPU usage samples.
+    pub metrics: NodeMetricsSnapshot, // Latest resource snapshot.
+    pub running_chunks: HashMap<String, RunningChunk>,  // Active chunk map keyed by chunk_id.
 }
 
 impl AppState {
-    // Constructor for a clean daemon boot state.
     pub fn new(node_id: String, idle_window_capacity: usize) -> Self {
         Self {
             node_id,
@@ -75,7 +58,6 @@ impl AppState {
         }
     }
 
-    // Adds a new CPU sample and keeps the sliding window bounded.
     pub fn push_cpu_sample(&mut self, sample: f32, max_samples: usize) {
         if self.cpu_window.len() == max_samples {
             self.cpu_window.pop_front();
@@ -83,7 +65,6 @@ impl AppState {
         self.cpu_window.push_back(sample);
     }
 
-    // Computes average CPU over current window; None if no samples yet.
     pub fn avg_cpu_window(&self) -> Option<f32> {
         if self.cpu_window.is_empty() {
             return None;
@@ -98,5 +79,4 @@ impl AppState {
         self.running_chunks.len()
     }
 }
-pub type SharedAppState = Arc<RwLock<AppState>>;
-// Type alias used across modules for clean function signatures.
+pub type SharedAppState = Arc<RwLock<AppState>>; // Type alias used across modules for clean function signatures.
