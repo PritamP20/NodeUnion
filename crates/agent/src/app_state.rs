@@ -80,3 +80,41 @@ impl AppState {
     }
 }
 pub type SharedAppState = Arc<RwLock<AppState>>; // Type alias used across modules for clean function signatures.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_window_is_bounded_and_average_is_correct() {
+        let mut state = AppState::new("node-1".to_string(), 3);
+
+        state.push_cpu_sample(10.0, 3);
+        state.push_cpu_sample(20.0, 3);
+        state.push_cpu_sample(30.0, 3);
+        state.push_cpu_sample(40.0, 3);
+
+        assert_eq!(state.cpu_window.len(), 3);
+        assert_eq!(state.cpu_window.front().copied(), Some(20.0));
+        assert_eq!(state.cpu_window.back().copied(), Some(40.0));
+        assert_eq!(state.avg_cpu_window(), Some(30.0));
+    }
+
+    #[test]
+    fn running_chunks_count_tracks_insertions() {
+        let mut state = AppState::new("node-2".to_string(), 10);
+        assert_eq!(state.running_chunks_count(), 0);
+
+        state.running_chunks.insert(
+            "chunk-1".to_string(),
+            RunningChunk {
+                job_id: "job-1".to_string(),
+                chunk_id: "chunk-1".to_string(),
+                container_id: "container-1".to_string(),
+                status: JobStatus::Running,
+            },
+        );
+
+        assert_eq!(state.running_chunks_count(), 1);
+    }
+}

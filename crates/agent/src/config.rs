@@ -16,7 +16,7 @@ impl Config {
     pub fn from_env() -> Self {
         Self {
             node_id: read_string("NODE_ID", "local-node-1"),
-            bind_addr: read_string("AGENT_BIND_ADDR", "0.0.0.0::8090"),
+            bind_addr: read_string("AGENT_BIND_ADDR", "0.0.0.0:8090"),
             orchestrator_base_url: read_string("ORCHESTRATOR_BASE_URL", "http://127.0.0.1:8080"),
             heartbeat_interval_secs: read_u64("HEARTBEAT_INTERVAL_SECS", 60),
             metrics_poll_interval_secs: read_u64("METRICS_POLL_INTERVAL_SECS", 30),
@@ -42,15 +42,8 @@ fn read_u64(key: &str, default: u64) -> u64 {
 fn read_usize(key: &str, default: usize) -> usize {
     env::var(key)
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(default)
-}
-
-fn read_usize(key: &str, default: usize) -> usize {
-    env::var(key)
-        .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default);
+        .unwrap_or(default)
 }
 
 fn read_f32(key: &str, default: f32) -> f32 {
