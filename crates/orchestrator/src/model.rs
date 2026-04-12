@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize}
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NodeStatus {
     Idle,
     Busy,
@@ -9,7 +9,7 @@ pub enum NodeStatus {
     Preempting
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum JobStatus {
     Pending,
     Scheduled,
@@ -76,12 +76,21 @@ pub struct RunJobRequest {
     pub env: Option<Vec<String>> // Optional environment variables for container.
 }
 
-#[derive(Derive, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunJobResponse {
     pub accepted: bool, // Whether agent accepted chunk launch.
     pub message: String, // Human-readable launch/validation result.
     pub container_id: Option<String>, // Created container ID when launch succeeds.
     pub status: JobStatus // Current chunk/job status after request handling.
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkStatusUpdate {
+    pub node_id: String, // Node sending chunk lifecycle update.
+    pub job_id: String, // Parent job ID.
+    pub chunk_id: String, // Chunk ID being updated.
+    pub status: JobStatus, // New chunk/job status.
+    pub detail: Option<String>, // Optional human-readable status detail.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +114,7 @@ pub struct JobRecord {
     pub image: String, // Requested container image for this job.
     pub command: Option<Vec<String>>, // Optional command override for job run.
     pub cpu_limit: f64, // Requested CPU limit for scheduling/run.
-    pub ram_limit_md: u64, // Requested RAM limit field (currently named ram_limit_md in this file).
+    pub ram_limit_mb: u64, // Requested RAM limit in MB.
     pub status: JobStatus, // Current lifecycle status of this job.
     pub assigned_node_id: Option<String>, // Node currently assigned to run this job.
     pub created_at_epoch_secs: u64 // Job creation timestamp (epoch seconds).
