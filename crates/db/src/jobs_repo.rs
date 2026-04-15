@@ -6,11 +6,12 @@ pub async fn create_job(pool: &DbPool, job: &JobRow) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO jobs (
-            job_id, image, command, cpu_limit, ram_limit_mb, status, assigned_node_id, created_at_epoch_secs
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            job_id, network_id, image, command, cpu_limit, ram_limit_mb, status, assigned_node_id, created_at_epoch_secs
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
     .bind(&job.job_id)
+    .bind(&job.network_id)
     .bind(&job.image)
     .bind(&job.command)
     .bind(job.cpu_limit)
@@ -39,9 +40,14 @@ pub async fn list_all_jobs(pool: &DbPool) -> Result<Vec<JobRow>> {
 }
 
 pub async fn list_pending_jobs(pool: &DbPool) -> Result<Vec<JobRow>> {
+    list_pending_jobs_in_network(pool, "default").await
+}
+
+pub async fn list_pending_jobs_in_network(pool: &DbPool, network_id: &str) -> Result<Vec<JobRow>> {
     let rows = sqlx::query_as::<_, JobRow>(
-        "SELECT * FROM jobs WHERE status = 'Pending' ORDER BY created_at_epoch_secs ASC",
+        "SELECT * FROM jobs WHERE status = 'Pending' AND network_id = $1 ORDER BY created_at_epoch_secs ASC",
     )
+    .bind(network_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)

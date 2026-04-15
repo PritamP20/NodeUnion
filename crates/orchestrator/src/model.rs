@@ -23,6 +23,7 @@ pub enum JobStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterNodeRequest {
     pub node_id: String, // Unique identifier of the node registering with orchestrator.
+    pub network_id: String, // Target network this node belongs to (e.g., clg-a).
     pub agent_url: String, // Base URL where this node's agent API is reachable.
     pub region: Option<String>, // Optional deployment region (for locality-aware scheduling).
     pub labels: Option<HashMap<String, String>> // Optional key/value metadata (gpu=true, tier=dev, etc.).
@@ -49,10 +50,32 @@ pub struct HeartbeatPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmitJobRequest {
+    pub network_id: String, // Network where this job should be scheduled.
     pub image: String, // Container image to run for this job.
     pub command: Option<Vec<String>>, // Optional command override for container entrypoint.
     pub cpu_limit: f64, // CPU allocation requested for job/chunk.
     pub ram_limit_mb: u64 // RAM allocation requested in MB.
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateNetworkRequest {
+    pub network_id: String, // Unique network identifier (e.g., clg-a).
+    pub name: String, // Human-readable network name.
+    pub description: Option<String>, // Optional details about this network.
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateNetworkResponse {
+    pub created: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkRecord {
+    pub network_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at_epoch_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +119,7 @@ pub struct ChunkStatusUpdate {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeRecord {
     pub node_id: String, // Unique node identifier key.
+    pub network_id: String, // Network this node belongs to.
     pub agent_url: String, // Agent base URL used by orchestrator to call /run and /stop.
     pub region: Option<String>, // Optional node region for placement strategy.
     pub labels: HashMap<String, String>, // Normalized node metadata labels.
@@ -111,6 +135,7 @@ pub struct NodeRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
     pub job_id: String, // Unique orchestrator-assigned job ID.
+    pub network_id: String, // Network where this job is scheduled.
     pub image: String, // Requested container image for this job.
     pub command: Option<Vec<String>>, // Optional command override for job run.
     pub cpu_limit: f64, // Requested CPU limit for scheduling/run.

@@ -1,8 +1,17 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NetworkRow {
+    pub network_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at_epoch_secs: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct NodeRow {
     pub node_id: String,
+    pub network_id: String,
     pub agent_url: String,
     pub region: Option<String>,
     pub labels: String,
@@ -18,6 +27,7 @@ pub struct NodeRow {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct JobRow{
     pub job_id: String,
+    pub network_id: String,
     pub image: String,
     pub command: Option<String>,
     pub cpu_limit: f64,

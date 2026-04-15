@@ -4,16 +4,16 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use db::{jobs_repo, node_repo, schema::{JobRow, NodeRow}, DbPool};
+use db::{jobs_repo, networks_repo, node_repo, schema::{JobRow, NetworkRow, NodeRow}, DbPool};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 
 use crate::model::{
-    ChunkStatusUpdate, HeartbeatPayload, JobRecord, JobStatus, NodeRecord, NodeStatus,
-    RegisterNodeRequest, RegisterNodeResponse, RunJobRequest, RunJobResponse, SubmitJobRequest,
-    SubmitJobResponse,
+    ChunkStatusUpdate, CreateNetworkRequest, CreateNetworkResponse, HeartbeatPayload, JobRecord,
+    JobStatus, NetworkRecord, NodeRecord, NodeStatus, RegisterNodeRequest, RegisterNodeResponse,
+    RunJobRequest, RunJobResponse, SubmitJobRequest, SubmitJobResponse,
 };
 use crate::state::SharedState;
 
@@ -27,6 +27,8 @@ pub struct AppState {
 pub fn build_router(app: AppState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+        .route("/networks/create", post(create_network_handler))
+        .route("/networks", get(list_networks_handler))
         .route("/nodes/register", post(register_node_handler))
         .route("/nodes", get(list_nodes_handler))
         .route("/jobs/submit", post(submit_job_handler))
@@ -60,14 +62,81 @@ async fn health_handler() -> StatusCode {
     StatusCode::OK
 }
 
+async fn create_network_handler(
+    State(app): State<AppState>,
+    Json(payload): Json<CreateNetworkRequest>,
+) -> Result<Json<CreateNetworkResponse>, (StatusCode, Json<serde_json::Value>)> {
+    if payload.network_id.trim().is_empty() || payload.name.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "network_id and name are required"})),
+        ));
+    }
+
+    let now = now_epoch_secs() as i64;
+    let record = NetworkRecord {
+        network_id: payload.network_id.clone(),
+        name: payload.name.clone(),
+        description: payload.description.clone(),
+        created_at_epoch_secs: now as u64,
+    };
+
+    networks_repo::create_network(&app.db, &network_record_to_row(&record))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("db create network failed: {e}")})),
+            )
+        })?;
+
+    let mut guard = app.state.write().await;
+    guard.networks.insert(record.network_id.clone(), record);
+
+    Ok(Json(CreateNetworkResponse {
+        created: true,
+        message: "network created".to_string(),
+    }))
+}
+
+async fn list_networks_handler(State(app): State<AppState>) -> Json<Vec<NetworkRecord>> {
+    match networks_repo::list_networks(&app.db).await {
+        Ok(rows) => Json(rows.into_iter().map(network_row_to_record).collect()),
+        Err(_) => {
+            let guard = app.state.read().await;
+            Json(guard.networks.values().cloned().collect())
+        }
+    }
+}
+
 async fn register_node_handler(
     State(app): State<AppState>,
     Json(payload): Json<RegisterNodeRequest>,
 ) -> Result<Json<RegisterNodeResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if payload.node_id.trim().is_empty() || payload.agent_url.trim().is_empty() {
+    if payload.node_id.trim().is_empty()
+        || payload.agent_url.trim().is_empty()
+        || payload.network_id.trim().is_empty()
+    {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "node_id and agent_url are required"})),
+            Json(serde_json::json!({"error": "node_id, network_id and agent_url are required"})),
+        ));
+    }
+
+    let network_exists = networks_repo::get_network(&app.db, &payload.network_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("db read network failed: {e}")})),
+            )
+        })?
+        .is_some();
+
+    if !network_exists {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "network does not exist"})),
         ));
     }
 
@@ -76,6 +145,7 @@ async fn register_node_handler(
 
     let node = NodeRecord {
         node_id: payload.node_id.clone(),
+        network_id: payload.network_id,
         agent_url: payload.agent_url,
         region: payload.region,
         labels: payload.labels.unwrap_or_default(),
@@ -117,20 +187,38 @@ async fn submit_job_handler(
     State(app): State<AppState>,
     Json(payload): Json<SubmitJobRequest>,
 ) -> Result<Json<SubmitJobResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if payload.image.trim().is_empty() {
+    if payload.network_id.trim().is_empty() || payload.image.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "image is required"})),
+            Json(serde_json::json!({"error": "network_id and image are required"})),
+        ));
+    }
+
+    let network_exists = networks_repo::get_network(&app.db, &payload.network_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("db read network failed: {e}")})),
+            )
+        })?
+        .is_some();
+
+    if !network_exists {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "network does not exist"})),
         ));
     }
 
     let (job_id, inserted_job) = {
         let mut guard = app.state.write().await;
         guard.next_job_seq += 1;
-        let job_id = format!("job-{}", guard.next_job_seq);
+        let job_id = format!("job-{}-{}", now_epoch_millis(), guard.next_job_seq);
 
         let job = JobRecord {
             job_id: job_id.clone(),
+            network_id: payload.network_id.clone(),
             image: payload.image.clone(),
             command: payload.command.clone(),
             cpu_limit: payload.cpu_limit,
@@ -179,6 +267,7 @@ async fn submit_job_handler(
         &app,
         &JobRecord {
             job_id: job_id.clone(),
+            network_id: payload.network_id,
             image: payload.image,
             command: payload.command,
             cpu_limit: payload.cpu_limit,
@@ -217,6 +306,7 @@ async fn agent_heartbeat_handler(
 
     let entry = guard.nodes.entry(payload.node_id.clone()).or_insert(NodeRecord {
         node_id: payload.node_id.clone(),
+        network_id: "default".to_string(),
         agent_url: "unknown".to_string(),
         region: None,
         labels: HashMap::new(),
@@ -278,7 +368,11 @@ async fn dispatch_job_to_idle_node(app: &AppState, job_id: &str) -> Result<(), (
         let selected_node = match guard
             .nodes
             .values()
-            .find(|n| n.is_idle && (n.agent_url.starts_with("http://") || n.agent_url.starts_with("https://")))
+            .find(|n| {
+                n.network_id == job.network_id
+                    && n.is_idle
+                    && (n.agent_url.starts_with("http://") || n.agent_url.starts_with("https://"))
+            })
             .cloned()
         {
             Some(n) => n,
@@ -403,6 +497,7 @@ async fn persist_job_state(app: &AppState, job: &JobRecord) -> Result<(), ()> {
 fn node_record_to_row(node: &NodeRecord) -> NodeRow {
     NodeRow {
         node_id: node.node_id.clone(),
+        network_id: node.network_id.clone(),
         agent_url: node.agent_url.clone(),
         region: node.region.clone(),
         labels: serde_json::to_string(&node.labels).unwrap_or_else(|_| "{}".to_string()),
@@ -419,6 +514,7 @@ fn node_record_to_row(node: &NodeRecord) -> NodeRow {
 fn node_row_to_record(row: NodeRow) -> NodeRecord {
     NodeRecord {
         node_id: row.node_id,
+        network_id: row.network_id,
         agent_url: row.agent_url,
         region: row.region,
         labels: serde_json::from_str(&row.labels).unwrap_or_default(),
@@ -435,6 +531,7 @@ fn node_row_to_record(row: NodeRow) -> NodeRecord {
 fn job_record_to_row(job: &JobRecord) -> JobRow {
     JobRow {
         job_id: job.job_id.clone(),
+        network_id: job.network_id.clone(),
         image: job.image.clone(),
         command: job
             .command
@@ -451,6 +548,7 @@ fn job_record_to_row(job: &JobRecord) -> JobRow {
 fn job_row_to_record(row: JobRow) -> JobRecord {
     JobRecord {
         job_id: row.job_id,
+        network_id: row.network_id,
         image: row.image,
         command: row
             .command
@@ -459,6 +557,24 @@ fn job_row_to_record(row: JobRow) -> JobRecord {
         ram_limit_mb: row.ram_limit_mb as u64,
         status: job_status_from_string(&row.status),
         assigned_node_id: row.assigned_node_id,
+        created_at_epoch_secs: row.created_at_epoch_secs as u64,
+    }
+}
+
+fn network_record_to_row(network: &NetworkRecord) -> NetworkRow {
+    NetworkRow {
+        network_id: network.network_id.clone(),
+        name: network.name.clone(),
+        description: network.description.clone(),
+        created_at_epoch_secs: network.created_at_epoch_secs as i64,
+    }
+}
+
+fn network_row_to_record(row: NetworkRow) -> NetworkRecord {
+    NetworkRecord {
+        network_id: row.network_id,
+        name: row.name,
+        description: row.description,
         created_at_epoch_secs: row.created_at_epoch_secs as u64,
     }
 }

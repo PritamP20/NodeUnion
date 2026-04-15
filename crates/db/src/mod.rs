@@ -3,6 +3,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 
 pub mod attempts;
 pub mod jobs_repo;
+pub mod networks_repo;
 pub mod node_repo;
 pub mod schema;
 
@@ -21,8 +22,23 @@ pub async fn new_pool(database_url: &str) -> anyhow::Result<DbPool> {
 pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
     sqlx::query(
         r#"
+        CREATE TABLE IF NOT EXISTS networks (
+            network_id VARCHAR(255) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            created_at_epoch_secs BIGINT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
         CREATE TABLE IF NOT EXISTS nodes (
             node_id VARCHAR(255) PRIMARY KEY,
+            network_id VARCHAR(255) NOT NULL DEFAULT 'default',
             agent_url VARCHAR(512) NOT NULL,
             region VARCHAR(100),
             labels TEXT NOT NULL DEFAULT '{}',
@@ -40,10 +56,15 @@ pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS network_id VARCHAR(255) NOT NULL DEFAULT 'default'")
+        .execute(pool)
+        .await?;
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS jobs (
             job_id VARCHAR(255) PRIMARY KEY,
+            network_id VARCHAR(255) NOT NULL DEFAULT 'default',
             image VARCHAR(512) NOT NULL,
             command TEXT,
             cpu_limit FLOAT NOT NULL,
@@ -59,6 +80,10 @@ pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    sqlx::query("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS network_id VARCHAR(255) NOT NULL DEFAULT 'default'")
+        .execute(pool)
+        .await?;
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS attempts (
@@ -73,6 +98,16 @@ pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
             FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE,
             FOREIGN KEY (assigned_node_id) REFERENCES nodes(node_id) ON DELETE SET NULL
         )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO networks (network_id, name, description, created_at_epoch_secs)
+        VALUES ('default', 'Default Network', 'Auto-created fallback network', EXTRACT(EPOCH FROM NOW())::BIGINT)
+        ON CONFLICT (network_id) DO NOTHING
         "#,
     )
     .execute(pool)
