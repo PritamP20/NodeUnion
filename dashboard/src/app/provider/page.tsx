@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import {
   Job,
   Network,
@@ -51,10 +51,6 @@ export default function ProviderAndDeployPage() {
       setStatusMessage(`Refresh failed: ${(error as Error).message}`);
     }
   }
-
-  useEffect(() => {
-    void refreshAll();
-  }, []);
 
   async function onConnectWallet() {
     try {

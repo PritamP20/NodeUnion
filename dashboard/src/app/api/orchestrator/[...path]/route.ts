@@ -19,14 +19,26 @@ async function proxyRequest(
         ? JSON.stringify(await req.json())
         : await req.text();
 
-  const upstream = await fetch(targetUrl, {
-    method: req.method,
-    headers: {
-      ...(contentType ? { "content-type": contentType } : {}),
-    },
-    body,
-    cache: "no-store",
-  });
+  let upstream: Response;
+
+  try {
+    upstream = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        ...(contentType ? { "content-type": contentType } : {}),
+      },
+      body,
+      cache: "no-store",
+    });
+  } catch {
+    return NextResponse.json(
+      {
+        error: "Orchestrator unavailable",
+        message: `Could not reach ${ORCHESTRATOR_URL}`,
+      },
+      { status: 503 },
+    );
+  }
 
   const rawText = await upstream.text();
 

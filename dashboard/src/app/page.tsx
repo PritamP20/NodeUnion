@@ -1,30 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Job, Network, Node, fetchOverview } from "@/lib/orchestrator";
 
 export default function LandingPage() {
   const [networks, setNetworks] = useState<Network[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [statusMessage, setStatusMessage] = useState("Loading live overview...");
+  const [statusMessage, setStatusMessage] = useState(
+    "Click refresh to load live overview from the orchestrator",
+  );
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await fetchOverview();
-        setNetworks(data.networks);
-        setNodes(data.nodes);
-        setJobs(data.jobs);
-        setStatusMessage("Live overview synced from orchestrator");
-      } catch (error) {
-        setStatusMessage(`Unable to load live overview: ${(error as Error).message}`);
-      }
+  async function refreshOverview() {
+    try {
+      const data = await fetchOverview();
+      setNetworks(data.networks);
+      setNodes(data.nodes);
+      setJobs(data.jobs);
+      setStatusMessage("Live overview synced from orchestrator");
+    } catch (error) {
+      setStatusMessage(`Unable to load live overview: ${(error as Error).message}`);
     }
-
-    void load();
-  }, []);
+  }
 
   const metrics = useMemo(() => {
     const idleNodes = nodes.filter((node) => node.is_idle).length;
@@ -120,7 +118,15 @@ export default function LandingPage() {
         </article>
 
         <article className="glass-card rounded-2xl p-5">
-          <h2 className="section-title">Live State</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="section-title">Live State</h2>
+            <button
+              onClick={() => void refreshOverview()}
+              className="rounded-lg border border-cyan-300/40 bg-cyan-300/20 px-3 py-1.5 text-xs font-semibold hover:bg-cyan-300/30"
+            >
+              Refresh live data
+            </button>
+          </div>
           <p className="mt-3 text-sm text-cyan-100/90">{statusMessage}</p>
           <p className="mt-2 text-xs text-slate-400">
             Status is sourced from /networks, /nodes, and /jobs through the orchestrator API proxy.

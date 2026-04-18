@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-docker-dark text-gray-100;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-docker-darker;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-docker-border hover:bg-docker-accent rounded;
+}

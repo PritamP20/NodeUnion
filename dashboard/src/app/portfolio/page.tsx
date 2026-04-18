@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Entitlement,
   Job,
@@ -39,10 +39,6 @@ export default function PortfolioPage() {
       setStatusMessage(`Overview refresh failed: ${(error as Error).message}`);
     }
   }
-
-  useEffect(() => {
-    void refreshOverview();
-  }, []);
 
   async function onConnectWallet() {
     try {
