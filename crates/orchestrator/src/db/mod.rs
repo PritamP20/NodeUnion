@@ -42,6 +42,26 @@ pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
         .execute(pool)
         .await?;
 
+    sqlx::query("ALTER TABLE networks ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'Active'")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("ALTER TABLE networks ADD COLUMN IF NOT EXISTS created_at_epoch_secs BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("ALTER TABLE networks ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("UPDATE networks SET status = 'Active' WHERE status IS NULL")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("UPDATE networks SET created_at_epoch_secs = EXTRACT(EPOCH FROM NOW())::BIGINT WHERE created_at_epoch_secs IS NULL")
+        .execute(pool)
+        .await?;
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS nodes (

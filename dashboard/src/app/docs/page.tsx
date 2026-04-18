@@ -1,155 +1,228 @@
-export default function DocsPage() {
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+  Copy,
+  Info,
+  Lightbulb,
+  Search,
+} from "lucide-react";
+import { docSections } from "@/lib/dashboard-data";
+
+type CalloutTone = "info" | "tip" | "warning";
+
+function toneClasses(tone: CalloutTone) {
+  switch (tone) {
+    case "tip":
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+    case "warning":
+      return "border-amber-500/20 bg-amber-500/10 text-amber-100";
+    default:
+      return "border-sky-500/20 bg-sky-500/10 text-sky-100";
+  }
+}
+
+function CalloutIcon({ tone }: { tone: CalloutTone }) {
+  if (tone === "tip") return <Lightbulb size={16} className="text-emerald-300" />;
+  if (tone === "warning") return <AlertTriangle size={16} className="text-amber-300" />;
+  return <Info size={16} className="text-sky-300" />;
+}
+
+function CodeBlock({ label, language, code }: { label: string; language: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  const lines = code.split("\n");
+
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="glass-card rounded-3xl p-6 sm:p-8">
-        <p className="font-mono text-xs tracking-[0.2em] text-cyan-200/70">
-          NODEUNION / END-TO-END DOCUMENTATION
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-          NodeUnion platform documentation
-        </h1>
-        <p className="mt-3 text-sm text-slate-300 sm:text-base">
-          This page documents architecture, user/provider journeys, API surface,
-          and operating procedures from first deployment to daily operations.
-        </p>
-      </header>
+    <div className="code-block overflow-hidden rounded-2xl">
+      <div className="flex items-center justify-between border-b border-white/5 px-4 py-3 text-xs uppercase tracking-[0.24em] text-slate-400">
+        <div className="flex items-center gap-2">
+          <Code2 size={14} className="text-sky-300" />
+          <span>{label}</span>
+          <span className="rounded-full border border-white/5 bg-white/5 px-2 py-1 text-[10px] tracking-[0.2em] text-slate-500">
+            {language}
+          </span>
+        </div>
+        <button
+          onClick={handleCopy}
+          className="inline-flex items-center gap-1 rounded-full border border-white/5 bg-white/5 px-3 py-1.5 text-[11px] text-slate-300 transition hover:border-sky-400/40 hover:bg-sky-500/10"
+        >
+          {copied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-4 font-mono text-sm leading-6 text-slate-200">
+        {lines.map((line, index) => (
+          <div key={`${label}-${index}`} className="flex gap-4 whitespace-pre-wrap">
+            <span className="w-8 shrink-0 select-none text-right text-slate-600">{index + 1}</span>
+            <span className={language === "bash" ? "text-slate-200" : language === "json" ? "text-sky-200" : "text-emerald-200"}>
+              {line}
+            </span>
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
 
-      <section className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <article className="doc-card p-5">
-          <h2 className="section-title">1. Platform Overview</h2>
-          <p className="mt-3 text-sm text-slate-300">
-            NodeUnion is a decentralized compute exchange with an orchestrator control
-            plane, wallet-linked users/providers, and blockchain-backed settlement data.
-            Networks represent logical compute pools where providers register nodes and users
-            deploy workloads.
-          </p>
-        </article>
+export default function DocsPage() {
+  const [search, setSearch] = useState("");
+  const [selectedSectionId, setSelectedSectionId] = useState(docSections[0].id);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    "Getting Started": true,
+    "Orchestrator Setup": true,
+    "Agent Setup": true,
+    "Job Submission": true,
+    "Solana Billing": true,
+    "API Reference": true,
+    Troubleshooting: true,
+  });
 
-        <article className="doc-card p-5">
-          <h2 className="section-title">2. Core Components</h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300">
-            <li>Orchestrator API: admission, dispatch, node registry, and billing hooks.</li>
-            <li>Provider Agent: executes assigned jobs and reports status/usage.</li>
-            <li>Dashboard: operations UI for provider, user, and documentation workflows.</li>
-            <li>Solana Program Layer: network/provider registry and escrow/settlement primitives.</li>
-            <li>Postgres Data Layer: persistence for jobs, nodes, entitlements, and settlements.</li>
-          </ul>
-        </article>
+  const filteredSections = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return docSections;
+
+    return docSections.filter((section) => {
+      const haystack = [section.group, section.title, section.summary, ...section.steps, ...section.codeBlocks.map((block) => block.code)]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [search]);
+
+  useEffect(() => {
+    if (!filteredSections.some((section) => section.id === selectedSectionId) && filteredSections[0]) {
+      setSelectedSectionId(filteredSections[0].id);
+    }
+  }, [filteredSections, selectedSectionId]);
+
+  const selectedSection = useMemo(
+    () => filteredSections.find((section) => section.id === selectedSectionId) ?? filteredSections[0] ?? docSections[0],
+    [filteredSections, selectedSectionId],
+  );
+
+  const groupedSections = useMemo(() => {
+    return filteredSections.reduce<Record<string, typeof docSections>>((groups, section) => {
+      groups[section.group] ??= [];
+      groups[section.group].push(section);
+      return groups;
+    }, {});
+  }, [filteredSections]);
+
+  return (
+    <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+      <section className="glass-card rounded-[2rem] p-6 sm:p-8">
+        <p className="font-mono text-xs uppercase tracking-[0.3em] text-sky-300/90">Documentation</p>
+        <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">NodeUnion deployment guide</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 sm:text-base">
+          Search the guide, expand the section groups on the left, and read the selected topic in a structured reference panel on the right.
+        </p>
       </section>
 
-      <section className="mt-4 space-y-4">
-        <article className="doc-card p-5">
-          <h2 className="section-title">3. Role Journeys</h2>
-          <div className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <div className="rounded-xl border border-cyan-900/40 bg-slate-950/50 p-4">
-              <h3 className="text-base font-semibold">Provider Journey</h3>
-              <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-300">
-                <li>Create or select a network from Provider + Deploy page.</li>
-                <li>Register provider node with wallet, agent URL, and region metadata.</li>
-                <li>Keep nodes idle-ready so orchestrator can schedule incoming jobs.</li>
-                <li>Monitor provider portfolio to track assigned workloads by node.</li>
-              </ol>
-            </div>
+      <section className="mt-6 grid gap-6 xl:grid-cols-[0.34fr_0.66fr]">
+        <aside className="glass-card rounded-[1.75rem] p-5">
+          <label className="flex items-center gap-3 rounded-2xl border border-white/5 bg-black/20 px-4 py-3">
+            <Search size={16} className="text-slate-400" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search docs"
+              className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500"
+            />
+          </label>
 
-            <div className="rounded-xl border border-cyan-900/40 bg-slate-950/50 p-4">
-              <h3 className="text-base font-semibold">User Journey</h3>
-              <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-300">
-                <li>Connect wallet from Provider + Deploy page.</li>
-                <li>Select desired network and submit image + command workload payload.</li>
-                <li>Track job status from dashboard and orchestrator queue surfaces.</li>
-                <li>Inspect credits and settlement ledger in Portfolio user mode.</li>
-              </ol>
+          <div className="mt-5 space-y-3">
+            {Object.entries(groupedSections).map(([group, sections]) => {
+              const open = openGroups[group] ?? true;
+              return (
+                <div key={group} className="rounded-[1.25rem] border border-white/5 bg-white/5 p-3">
+                  <button
+                    onClick={() => setOpenGroups((current) => ({ ...current, [group]: !open }))}
+                    className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left"
+                  >
+                    <span className="text-xs uppercase tracking-[0.26em] text-slate-400">{group}</span>
+                    {open ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
+                  </button>
+
+                  {open && (
+                    <div className="mt-2 space-y-2">
+                      {sections.map((section) => (
+                        <button
+                          key={section.id}
+                          onClick={() => setSelectedSectionId(section.id)}
+                          className={`sidebar-pill w-full rounded-xl border px-3 py-3 text-left transition ${
+                            selectedSection.id === section.id
+                              ? "border-sky-400/30 bg-sky-500/10"
+                              : "border-white/5 bg-black/10"
+                          }`}
+                        >
+                          <p className="text-sm font-semibold text-slate-100">{section.title}</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-400">{section.summary}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+
+        <article className="glass-card rounded-[1.75rem] p-6">
+          <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+            <span className="rounded-full border border-white/5 bg-white/5 px-3 py-1 text-slate-300">
+              {selectedSection.group}
+            </span>
+            <span className="rounded-full border border-white/5 bg-white/5 px-3 py-1 text-slate-300">
+              {selectedSection.codeBlocks.length} code blocks
+            </span>
+          </div>
+
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight">{selectedSection.title}</h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">{selectedSection.summary}</p>
+
+          {selectedSection.callout && (
+            <div className={`mt-5 rounded-2xl border p-4 ${toneClasses(selectedSection.callout.tone)}`}>
+              <div className="flex items-start gap-3">
+                <CalloutIcon tone={selectedSection.callout.tone} />
+                <div>
+                  <p className="font-semibold text-slate-100">{selectedSection.callout.title}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-300">{selectedSection.callout.body}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6 rounded-[1.5rem] border border-white/5 bg-white/5 p-5">
+            <h3 className="text-sm uppercase tracking-[0.26em] text-slate-400">Step-by-step</h3>
+            <div className="mt-4 space-y-3">
+              {selectedSection.steps.map((step, index) => (
+                <div key={step} className="flex gap-3 rounded-2xl border border-white/5 bg-black/20 p-4">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-500/15 font-semibold text-sky-300">
+                    {index + 1}
+                  </div>
+                  <p className="text-sm leading-6 text-slate-300">{step}</p>
+                </div>
+              ))}
             </div>
           </div>
-        </article>
 
-        <article className="doc-card p-5">
-          <h2 className="section-title">4. Dashboard Page Map</h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300">
-            <li>Landing: purpose, system flow, and live high-level metrics.</li>
-            <li>Provider + Deploy: network creation, provider registration, and user deployment forms.</li>
-            <li>Portfolio: wallet-role aware view for provider operations or user financial state.</li>
-            <li>Docs: complete technical and operational guidance.</li>
-          </ul>
-        </article>
-
-        <article className="doc-card p-5">
-          <h2 className="section-title">5. API Endpoints Consumed by UI</h2>
-          <div className="overflow-x-auto">
-            <table className="mt-3 min-w-full text-left text-sm text-slate-300">
-              <thead>
-                <tr className="border-b border-cyan-900/40 text-slate-400">
-                  <th className="px-2 py-2">Method</th>
-                  <th className="px-2 py-2">Path</th>
-                  <th className="px-2 py-2">Purpose</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">GET</td>
-                  <td className="px-2 py-2">/networks</td>
-                  <td className="px-2 py-2">List logical compute networks.</td>
-                </tr>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">POST</td>
-                  <td className="px-2 py-2">/networks/create</td>
-                  <td className="px-2 py-2">Register a network on-chain and in DB.</td>
-                </tr>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">GET</td>
-                  <td className="px-2 py-2">/nodes</td>
-                  <td className="px-2 py-2">List registered providers/nodes.</td>
-                </tr>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">POST</td>
-                  <td className="px-2 py-2">/nodes/register</td>
-                  <td className="px-2 py-2">Register provider node and wallet.</td>
-                </tr>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">GET</td>
-                  <td className="px-2 py-2">/jobs</td>
-                  <td className="px-2 py-2">List jobs and assignment status.</td>
-                </tr>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">POST</td>
-                  <td className="px-2 py-2">/jobs/submit</td>
-                  <td className="px-2 py-2">Submit workload for network scheduling.</td>
-                </tr>
-                <tr className="border-b border-cyan-950/60">
-                  <td className="px-2 py-2">GET</td>
-                  <td className="px-2 py-2">/users/:wallet/entitlements</td>
-                  <td className="px-2 py-2">Fetch wallet credit lanes and usage.</td>
-                </tr>
-                <tr>
-                  <td className="px-2 py-2">GET</td>
-                  <td className="px-2 py-2">/users/:wallet/settlements</td>
-                  <td className="px-2 py-2">Fetch wallet settlement transaction trail.</td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="mt-6 space-y-4">
+            {selectedSection.codeBlocks.map((block) => (
+              <CodeBlock key={block.label} {...block} />
+            ))}
           </div>
-        </article>
-
-        <article className="doc-card p-5">
-          <h2 className="section-title">6. Deployment and Runtime Notes</h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300">
-            <li>Run orchestrator and dashboard together for proxy-based API access.</li>
-            <li>Set ORCHESTRATOR_URL in dashboard environment when not using localhost defaults.</li>
-            <li>Use devnet-compatible wallet/browser extension for end-to-end chain tests.</li>
-            <li>Ensure provider agent URL is reachable by orchestrator for successful dispatch.</li>
-            <li>Keep signer keys and RPC credentials in secure secret storage for production.</li>
-          </ul>
-        </article>
-
-        <article className="doc-card p-5">
-          <h2 className="section-title">7. Troubleshooting</h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300">
-            <li>Wallet connect fails: verify browser wallet extension is installed and unlocked.</li>
-            <li>Provider registration fails: validate network exists and provider wallet format is correct.</li>
-            <li>Job deploy fails: ensure wallet is connected and target network has idle providers.</li>
-            <li>Portfolio data missing: confirm the same wallet was used for job/deployment activity.</li>
-            <li>No live metrics: confirm orchestrator service is running and API proxy route is healthy.</li>
-          </ul>
         </article>
       </section>
     </main>

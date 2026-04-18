@@ -47,6 +47,7 @@ pub struct RegisterNodeResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatPayload {
     pub node_id: String, // Node ID sending this heartbeat.
+    pub network_id: String, // Network this node belongs to.
     pub cpu_available_pct: f32, // Currently available CPU percentage on node.
     pub ram_available_mb: u64, // Free RAM on node in MB.
     pub disk_available_gb: u64, // Free disk space on node in GB.

@@ -13,6 +13,27 @@ struct Snapshot {
     errors: Vec<String>,
 }
 
+fn prompt_base_url() -> String {
+    let current = env::var("ORCHESTRATOR_URL")
+        .or_else(|_| env::var("ORCHESTRATOR_BASE_URL"))
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+
+    print!("ORCHESTRATOR_BASE_URL [{}]: ", current);
+    let _ = io::stdout().flush();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return current;
+    }
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        current
+    } else {
+        trimmed.to_string()
+    }
+}
+
 async fn fetch_snapshot(client: &Client, base_url: &str) -> Snapshot {
     let mut errors = Vec::new();
 
@@ -148,7 +169,11 @@ fn render(snapshot: &Snapshot, base_url: &str) {
 
 #[tokio::main]
 async fn main() {
-    let base_url = env::var("ORCHESTRATOR_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    println!("NodeUnion Local TUI");
+    println!("Fill values and press enter to keep defaults where available.");
+    println!();
+
+    let base_url = prompt_base_url();
     let base_url = base_url.trim_end_matches('/').to_string();
 
     let client = Client::new();

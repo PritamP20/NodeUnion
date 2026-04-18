@@ -16,6 +16,7 @@ pub async fn run_heartbeat_loop(
 
             HeartbeatPayload {
                 node_id: guard.node_id.clone(),
+                network_id: config.network_id.clone(),
                 cpu_available_pct: guard.metrics.cpu_available_pct,
                 ram_available_mb: guard.metrics.ram_available_mb,
                 disk_available_gb: guard.metrics.disk_available_gb,

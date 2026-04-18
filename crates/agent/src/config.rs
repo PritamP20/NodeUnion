@@ -2,6 +2,7 @@ use std::env;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub node_id: String,
+    pub network_id: String,
     pub bind_addr: String,
     pub orchestrator_base_url: String,
     pub heartbeat_interval_secs: u64,
@@ -16,6 +17,7 @@ impl Config {
     pub fn from_env() -> Self {
         Self {
             node_id: read_string("NODE_ID", "local-node-1"),
+            network_id: read_string("NETWORK_ID", "default"),
             bind_addr: read_string("AGENT_BIND_ADDR", "0.0.0.0:8090"),
             orchestrator_base_url: read_string("ORCHESTRATOR_BASE_URL", "http://127.0.0.1:8080"),
             heartbeat_interval_secs: read_u64("HEARTBEAT_INTERVAL_SECS", 60),

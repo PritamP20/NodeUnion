@@ -1,11 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains-mono",
+});
 
 export const metadata: Metadata = {
   title: "NodeUnion Control Dashboard",
   description:
-    "Landing, provider operations, user portfolio, and complete docs for the NodeUnion compute exchange.",
+    "Dark-mode control dashboard for the NodeUnion decentralized compute marketplace.",
 };
 
 export default function RootLayout({
@@ -14,19 +25,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">
-        <header className="sticky top-0 z-50 border-b border-cyan-900/30 bg-slate-950/60 backdrop-blur">
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col bg-nodeunion-shell text-slate-100">
+        <header className="sticky top-0 z-50 border-b border-white/5 bg-[#0d1117]/75 backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-            <Link href="/" className="font-mono text-xs tracking-[0.22em] text-cyan-200/90">
-              NODEUNION
-            </Link>
+            <div>
+              <Link href="/" className="font-mono text-xs tracking-[0.28em] text-sky-300/90">
+                NODEUNION
+              </Link>
+              <p className="mt-1 text-[11px] uppercase tracking-[0.32em] text-slate-400">
+                Decentralized compute marketplace
+              </p>
+            </div>
             <nav className="flex items-center gap-2 text-sm">
               <Link href="/" className="nav-link">
                 Landing
               </Link>
-              <Link href="/provider" className="nav-link">
-                Provider + Deploy
+              <Link href="/networks" className="nav-link">
+                Networks
               </Link>
               <Link href="/portfolio" className="nav-link">
                 Portfolio

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JobStatus {
@@ -54,6 +55,7 @@ pub struct StopJobResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatPayload {
     pub node_id: String,
+    pub network_id: String,
     pub cpu_available_pct: f32,
     pub ram_available_mb: u64,
     pub disk_available_gb: u64,
@@ -61,6 +63,16 @@ pub struct HeartbeatPayload {
     pub running_chunks: usize,
     pub is_idle: bool,
     pub status: NodeStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterNodeRequest {
+    pub node_id: String,
+    pub network_id: String,
+    pub agent_url: String,
+    pub provider_wallet: Option<String>,
+    pub region: Option<String>,
+    pub labels: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

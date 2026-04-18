@@ -92,7 +92,7 @@ pub async fn run_pending_scheduler_loop(app: AppState, interval_secs: u64) {
 pub async fn run_status_maintenance_loop(app: AppState, interval_secs: u64, heartbeat_ttl_secs: u64) {
     loop {
         let now = now_epoch_secs();
-        let mut offline_node_snapshots = Vec::new();
+        let mut stale_node_ids = Vec::new();
         let mut network_status_snapshots: Vec<(String, NetworkStatus)> = Vec::new();
 
         {
@@ -100,12 +100,11 @@ pub async fn run_status_maintenance_loop(app: AppState, interval_secs: u64, hear
 
             let mut network_has_active_node: HashMap<String, bool> = HashMap::new();
 
-            for node in guard.nodes.values_mut() {
+            for node in guard.nodes.values() {
                 let stale = now.saturating_sub(node.last_seen_epoch_secs) > heartbeat_ttl_secs;
-                if stale && node.status != NodeStatus::Offline {
-                    node.status = NodeStatus::Offline;
-                    node.is_idle = false;
-                    offline_node_snapshots.push(node.clone());
+                if stale {
+                    stale_node_ids.push(node.node_id.clone());
+                    continue;
                 }
 
                 let is_active = matches!(node.status, NodeStatus::Idle | NodeStatus::Busy | NodeStatus::Draining | NodeStatus::Preempting)
@@ -130,10 +129,14 @@ pub async fn run_status_maintenance_loop(app: AppState, interval_secs: u64, hear
 
                 network_status_snapshots.push((network.network_id.clone(), network.status.clone()));
             }
+
+            for node_id in &stale_node_ids {
+                guard.nodes.remove(node_id);
+            }
         }
 
-        for node in offline_node_snapshots {
-            let _ = node_repo::register_node(&app.db, &node_record_to_row(&node)).await;
+        for node_id in stale_node_ids {
+            let _ = node_repo::delete_node(&app.db, &node_id).await;
         }
 
         for (network_id, status) in network_status_snapshots {
@@ -209,17 +212,6 @@ async fn create_network_handler(
         return Err(err);
     }
 
-    // Register network on-chain first
-    let tx_hash = app.solana
-        .register_network_on_chain(&payload.network_id, &payload.name)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("solana register network failed: {e}")})),
-            )
-        })?;
-
     let now = now_epoch_secs() as i64;
     let record = NetworkRecord {
         network_id: payload.network_id.clone(),
@@ -228,6 +220,24 @@ async fn create_network_handler(
         orchestrator_url: app.orchestrator_public_url.clone(),
         status: NetworkStatus::Active,
         created_at_epoch_secs: now as u64,
+    };
+
+    let chain_message = match app
+        .solana
+        .register_network_on_chain(&payload.network_id, &payload.name)
+        .await
+    {
+        Ok(tx_hash) => format!("network created on-chain: {tx_hash}"),
+        Err(err) => {
+            eprintln!(
+                "[WARN] register_network_on_chain failed for network '{}': {}",
+                payload.network_id, err
+            );
+            format!(
+                "network saved in db; on-chain registration failed: {}",
+                err
+            )
+        }
     };
 
     networks_repo::create_network(&app.db, &network_record_to_row(&record))
@@ -244,7 +254,7 @@ async fn create_network_handler(
 
     Ok(Json(CreateNetworkResponse {
         created: true,
-        message: format!("network created on-chain: {}", tx_hash),
+        message: chain_message,
     }))
 }
 
@@ -404,17 +414,20 @@ async fn submit_job_handler(
         ));
     }
 
-    // Check user quota in network
-    let estimated_units = (payload.cpu_limit * 10000.0) as i64 + (payload.ram_limit_mb as i64 / 100);
-    let has_quota = entitlements_repo::check_quota(&app.db, &payload.user_wallet, &payload.network_id, estimated_units)
-        .await
-        .unwrap_or(false);
+    // Check user quota in network (can be disabled for local testing)
+    let disable_billing = std::env::var("DISABLE_BILLING_CHECK").is_ok();
+    if !disable_billing {
+        let estimated_units = (payload.cpu_limit * 10000.0) as i64 + (payload.ram_limit_mb as i64 / 100);
+        let has_quota = entitlements_repo::check_quota(&app.db, &payload.user_wallet, &payload.network_id, estimated_units)
+            .await
+            .unwrap_or(false);
 
-    if !has_quota {
-        return Err((
-            StatusCode::PAYMENT_REQUIRED,
-            Json(serde_json::json!({"error": "insufficient compute credits in network"})),
-        ));
+        if !has_quota {
+            return Err((
+                StatusCode::PAYMENT_REQUIRED,
+                Json(serde_json::json!({"error": "insufficient compute credits in network"})),
+            ));
+        }
     }
 
     let (job_id, inserted_job) = {
@@ -554,12 +567,18 @@ async fn agent_heartbeat_handler(
 ) -> StatusCode {
     let mut guard = app.state.write().await;
 
+    // Use network_id from payload, or fall back to managed network, or default
+    let network_id = if !payload.network_id.is_empty() {
+        payload.network_id.clone()
+    } else {
+        app.managed_network_id
+            .clone()
+            .unwrap_or_else(|| "default".to_string())
+    };
+
     let entry = guard.nodes.entry(payload.node_id.clone()).or_insert(NodeRecord {
         node_id: payload.node_id.clone(),
-        network_id: app
-            .managed_network_id
-            .clone()
-            .unwrap_or_else(|| "default".to_string()),
+        network_id: network_id.clone(),
         agent_url: "unknown".to_string(),
         provider_wallet: None,
         region: None,
@@ -573,6 +592,7 @@ async fn agent_heartbeat_handler(
         last_seen_epoch_secs: now_epoch_secs(),
     });
 
+    entry.network_id = network_id;
     entry.status = payload.status;
     entry.is_idle = payload.is_idle;
     entry.cpu_available_pct = payload.cpu_available_pct;

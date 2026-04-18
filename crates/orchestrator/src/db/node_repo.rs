@@ -13,7 +13,7 @@ pub async fn register_node(pool: &DbPool, node: &NodeRow) -> Result<()> {
         ON CONFLICT (node_id) DO UPDATE SET
             network_id = $2,
             agent_url = $3,
-            provider_wallet = COALESCE($4, provider_wallet),
+            provider_wallet = COALESCE(EXCLUDED.provider_wallet, nodes.provider_wallet),
             region = $5,
             labels = $6,
             status = $7,
@@ -118,5 +118,14 @@ pub async fn update_heartbeat(
     .bind(node_id)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+pub async fn delete_node(pool: &DbPool, node_id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM nodes WHERE node_id = $1")
+        .bind(node_id)
+        .execute(pool)
+        .await?;
+
     Ok(())
 }

@@ -2,7 +2,7 @@ use std::time::Duration;
 use reqwest::Client;
 use tokio::time::sleep;
 use crate::config::Config;
-use crate::models::{ChunkStatusUpdate, HeartbeatPayload};
+use crate::models::{ChunkStatusUpdate, HeartbeatPayload, RegisterNodeRequest};
 
 #[derive(Clone)]
 pub struct OrchestratorClient {
@@ -134,6 +134,11 @@ impl OrchestratorClient {
 
     pub async fn send_heartbeat(&self, payload: &HeartbeatPayload) -> Result<(), String> {
         let url = format!("{}/agent/heartbeat", self.base_url);
+        self.post_with_retry(&url, payload, 3).await
+    }
+
+    pub async fn register_node(&self, payload: &RegisterNodeRequest) -> Result<(), String> {
+        let url = format!("{}/nodes/register", self.base_url);
         self.post_with_retry(&url, payload, 3).await
     }
 
