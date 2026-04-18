@@ -1,0 +1,1 @@
+{"rustc":13599730207768804761,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[8008191657135824715,"build_script_build",false,16576405880385388630]],"local":[{"RerunIfChanged":{"output":"debug/build/thiserror-fed9e9be92233869/output","paths":["build/probe.rs"]}}],"rustflags":["--cfg","procmacro2_semver_exempt"],"config":0,"compile_kind":0}

@@ -6,27 +6,29 @@ pub async fn register_node(pool: &DbPool, node: &NodeRow) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO nodes (
-            node_id, network_id, agent_url, region, labels, status, is_idle,
+            node_id, network_id, agent_url, provider_wallet, region, labels, status, is_idle,
             cpu_available_pct, ram_available_mb, disk_available_gb,
             running_chunks, last_seen_epoch_secs
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (node_id) DO UPDATE SET
             network_id = $2,
             agent_url = $3,
-            region = $4,
-            labels = $5,
-            status = $6,
-            is_idle = $7,
-            cpu_available_pct = $8,
-            ram_available_mb = $9,
-            disk_available_gb = $10,
-            running_chunks = $11,
-            last_seen_epoch_secs = $12
+            provider_wallet = COALESCE($4, provider_wallet),
+            region = $5,
+            labels = $6,
+            status = $7,
+            is_idle = $8,
+            cpu_available_pct = $9,
+            ram_available_mb = $10,
+            disk_available_gb = $11,
+            running_chunks = $12,
+            last_seen_epoch_secs = $13
         "#,
     )
     .bind(&node.node_id)
     .bind(&node.network_id)
     .bind(&node.agent_url)
+    .bind(&node.provider_wallet)
     .bind(&node.region)
     .bind(&node.labels)
     .bind(&node.status)
@@ -67,14 +69,15 @@ pub async fn find_idle_node_in_network(pool: &DbPool, network_id: &str) -> Resul
     let row = sqlx::query_as::<_, NodeRow>(
         r#"
         SELECT * FROM nodes
-                WHERE is_idle = true
-                    AND network_id = $1
+        WHERE is_idle = true
+          AND status = 'Idle'
+          AND network_id = $1
           AND (agent_url LIKE 'http://%' OR agent_url LIKE 'https://%')
         ORDER BY last_seen_epoch_secs DESC
         LIMIT 1
         "#,
     )
-        .bind(network_id)
+    .bind(network_id)
     .fetch_optional(pool)
     .await?;
 

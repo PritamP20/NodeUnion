@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+:root {
+  --background: #06141f;
+  --foreground: #e9fbff;
+  --surface: #0d2435;
+  --surface-2: #15334a;
+  --muted: #9bb6c9;
+  --accent: #36d9c5;
+  --accent-2: #ffcc66;
+  --danger: #ff7878;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: var(--font-plex-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-space-grotesk), sans-serif;
+  background-image:
+    radial-gradient(circle at 15% 20%, rgba(54, 217, 197, 0.22), transparent 40%),
+    radial-gradient(circle at 80% 0%, rgba(255, 204, 102, 0.18), transparent 35%),
+    linear-gradient(160deg, #06141f 0%, #081b2b 40%, #0b2235 100%);
+}
+
+.glass-card {
+  background: linear-gradient(
+    180deg,
+    rgba(21, 51, 74, 0.74),
+    rgba(13, 36, 53, 0.86)
+  );
+  border: 1px solid rgba(110, 187, 219, 0.2);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+}
+
+.kpi-pill {
+  border: 1px solid rgba(54, 217, 197, 0.26);
+  background: rgba(9, 29, 41, 0.75);
+}
+
+.status-ok {
+  color: #7ef2be;
+}
+
+.status-bad {
+  color: var(--danger);
+}
+
+.nav-link {
+  border: 1px solid transparent;
+  border-radius: 0.65rem;
+  color: #c8dfef;
+  padding: 0.35rem 0.7rem;
+  transition: all 160ms ease;
+}
+
+.nav-link:hover {
+  border-color: rgba(94, 178, 210, 0.4);
+  background: rgba(14, 43, 59, 0.7);
+  color: #ffffff;
+}
+
+.section-title {
+  font-size: 1.28rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.doc-card {
+  border: 1px solid rgba(112, 184, 214, 0.2);
+  border-radius: 1rem;
+  background: rgba(8, 28, 41, 0.74);
+}

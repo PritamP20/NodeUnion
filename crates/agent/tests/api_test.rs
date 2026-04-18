@@ -4,11 +4,11 @@
 // Integration tests for the HTTP API endpoints.
 // These tests start a test Axum server and make HTTP requests to verify handlers work.
 
-use agent::api::build_router;
-use agent::app_state::{AppState, SharedAppState, NodeMetricsSnapshot};
-use agent::config::Config;
-use agent::models::{RunJobRequest, StopJobRequest, NodeStatus};
-use agent::orchestrator_client::OrchestratorClient;
+use nodeunion_agent::api::build_router;
+use nodeunion_agent::app_state::{AppState, SharedAppState, NodeMetricsSnapshot};
+use nodeunion_agent::config::Config;
+use nodeunion_agent::models::{RunJobRequest, StopJobRequest, NodeStatus};
+use nodeunion_agent::orchestrator_client::OrchestratorClient;
 use axum::http::StatusCode;
 use axum::body::Body;
 use axum::http::Request;
@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 // Helper to create a test AppState and AppApiState for testing without Docker
-async fn create_test_app_state() -> (SharedAppState, agent::api::AppApiState) {
+async fn create_test_app_state() -> (SharedAppState, nodeunion_agent::api::AppApiState) {
     let app_state = Arc::new(RwLock::new(AppState {
         node_id: "test-node-1".to_string(),
         node_status: NodeStatus::Idle,
@@ -48,7 +48,7 @@ async fn create_test_app_state() -> (SharedAppState, agent::api::AppApiState) {
     let docker = bollard::Docker::connect_with_socket_defaults()
         .unwrap_or_else(|_| panic!("Docker daemon must be running for integration tests"));
 
-    (app_state.clone(), agent::api::AppApiState {
+    (app_state.clone(), nodeunion_agent::api::AppApiState {
         state: app_state.clone(),
         config,
         orchestrator_client: client,
@@ -119,28 +119,35 @@ async fn stop_endpoint_returns_404_for_unknown_chunk() {
 #[ignore = "requires Docker daemon and a real container to stop"]
 async fn stop_endpoint_removes_chunk_from_state() {
     let (state, app_api_state) = create_test_app_state().await;
+    let router = build_router(app_api_state);
 
-    // Populate the state with a running chunk
-    {
-        let mut guard = state.write().await;
-        guard.running_chunks.insert(
-            "chunk-456".to_string(),
-            agent::app_state::RunningChunk {
-                job_id: "job-123".to_string(),
-                chunk_id: "chunk-456".to_string(),
-                container_id: "test-container-id".to_string(),
-                status: agent::models::JobStatus::Running,
-            },
-        );
-    }
+    // Start a real container through /run so /stop operates on an actual container id.
+    let run_payload = RunJobRequest {
+        job_id: "job-123".to_string(),
+        chunk_id: "chunk-456".to_string(),
+        image: "alpine:latest".to_string(),
+        cpu_limit: 0.25,
+        ram_limit_mb: 128,
+        input_path: None,
+        command: Some(vec!["sh".to_string(), "-c".to_string(), "sleep 30".to_string()]),
+        env: None,
+    };
 
-    // Verify chunk is in state before stop
+    let run_request = Request::builder()
+        .method("POST")
+        .uri("/run")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_string(&run_payload).unwrap()))
+        .unwrap();
+
+    let run_response = router.clone().oneshot(run_request).await.unwrap();
+    assert_eq!(run_response.status(), StatusCode::OK);
+
+    // Verify chunk is tracked in state before stop.
     {
         let guard = state.read().await;
         assert!(guard.running_chunks.contains_key("chunk-456"));
     }
-
-    let router = build_router(app_api_state);
 
     let payload = StopJobRequest {
         chunk_id: "chunk-456".to_string(),

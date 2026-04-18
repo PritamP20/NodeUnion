@@ -3,10 +3,34 @@ use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, RemoveContainerOptions,
     StartContainerOptions, StopContainerOptions,
 };
+use bollard::errors::Error as BollardError;
+use bollard::image::CreateImageOptions;
+use futures_util::TryStreamExt;
 use std::collections::HashMap;
 use bollard::models::{HostConfig, PortBinding};
 use bollard::Docker;
 use crate::models::RunJobRequest;
+
+async fn ensure_image_available(docker: &Docker, image: &str) -> Result<()> {
+    match docker.inspect_image(image).await {
+        Ok(_) => Ok(()),
+        Err(BollardError::DockerResponseServerError { status_code: 404, .. }) => {
+            let options = Some(CreateImageOptions {
+                from_image: image,
+                ..Default::default()
+            });
+
+            docker
+                .create_image(options, None, None)
+                .try_collect::<Vec<_>>()
+                .await
+                .with_context(|| format!("failed to pull missing image {}", image))?;
+
+            Ok(())
+        }
+        Err(err) => Err(err).with_context(|| format!("failed to inspect image {}", image)),
+    }
+}
 
 /// Run a container with the specified configuration.
 /// If port_bindings is provided, maps container ports to host ports.
@@ -23,6 +47,8 @@ pub async fn run_container_with_ports(
     req: &RunJobRequest,
     port_bindings: Option<HashMap<String, u16>>,
 ) -> Result<String> {
+    ensure_image_available(docker, &req.image).await?;
+
     let name = format!("job-{}-{}", req.job_id, req.chunk_id);
     let nano_cpus = (req.cpu_limit * 1_000_000_000.0) as i64;
     let memory_bytes = (req.ram_limit_mb as i64) * 1024 * 1024;

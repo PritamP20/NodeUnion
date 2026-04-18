@@ -6,12 +6,13 @@ pub async fn create_job(pool: &DbPool, job: &JobRow) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO jobs (
-            job_id, network_id, image, command, cpu_limit, ram_limit_mb, status, assigned_node_id, created_at_epoch_secs
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            job_id, network_id, user_wallet, image, command, cpu_limit, ram_limit_mb, status, assigned_node_id, created_at_epoch_secs
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         "#,
     )
     .bind(&job.job_id)
     .bind(&job.network_id)
+    .bind(&job.user_wallet)
     .bind(&job.image)
     .bind(&job.command)
     .bind(job.cpu_limit)

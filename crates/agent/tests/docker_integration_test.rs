@@ -5,8 +5,8 @@
 // REQUIREMENTS: Docker daemon must be running locally
 // SETUP: Pull test image before running:  docker pull nginx:alpine
 
-use agent::container_manager::{run_container_with_ports, stop_container};
-use agent::models::RunJobRequest;
+use nodeunion_agent::container_manager::{run_container_with_ports, stop_container};
+use nodeunion_agent::models::RunJobRequest;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;

@@ -2,10 +2,10 @@
 // These tests verify that the idle detector successfully polls metrics and
 // manages state transitions in realistic conditions.
 
-use agent::app_state::{AppState, NodeMetricsSnapshot};
-use agent::config::Config;
-use agent::idle_detector::run_idle_detector;
-use agent::models::NodeStatus;
+use nodeunion_agent::app_state::{AppState, NodeMetricsSnapshot};
+use nodeunion_agent::config::Config;
+use nodeunion_agent::idle_detector::run_idle_detector;
+use nodeunion_agent::models::NodeStatus;
 use std::sync::Arc;
 use std::collections::VecDeque;
 use std::time::Duration;

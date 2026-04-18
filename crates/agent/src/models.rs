@@ -76,3 +76,27 @@ pub struct ChunkStatusUpdate {
 pub struct ErrorResponse {
     pub error: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunningChunkView {
+    pub job_id: String,
+    pub chunk_id: String,
+    pub container_id: String,
+    pub status: JobStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStateResponse {
+    pub node_id: String,
+    pub status: NodeStatus,
+    pub is_idle: bool,
+    pub running_chunks: usize,
+    pub consecutive_preempt_spikes: usize,
+    pub avg_cpu_window_pct: Option<f32>,
+    pub cpu_usage_pct: f32,
+    pub cpu_available_pct: f32,
+    pub ram_total_mb: u64,
+    pub ram_available_mb: u64,
+    pub disk_available_gb: u64,
+    pub active_chunks: Vec<RunningChunkView>,
+}

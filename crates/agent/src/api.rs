@@ -8,7 +8,10 @@ use axum::{
 use crate::app_state::SharedAppState;
 use crate::container_manager::{run_container, stop_container};
 use crate::errors::AppError;
-use crate::models::{JobStatus, RunJobRequest, RunJobResponse, StopJobRequest, StopJobResponse};
+use crate::models::{
+    AgentStateResponse, JobStatus, RunJobRequest, RunJobResponse, RunningChunkView, StopJobRequest,
+    StopJobResponse,
+};
 use crate::{config::Config, orchestrator_client::OrchestratorClient};
 use bollard::Docker;
 
@@ -23,6 +26,7 @@ pub struct AppApiState {
 pub fn build_router(app_state: AppApiState) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+    .route("/state", get(state_handler))
         .route("/run", post(run_handler))
         .route("/stop", post(stop_handler))
         .with_state(app_state)
@@ -31,6 +35,40 @@ pub fn build_router(app_state: AppApiState) -> Router {
 
 async fn health_handler() -> StatusCode {
     StatusCode::OK
+}
+
+async fn state_handler(
+    State(app): State<AppApiState>,
+) -> Result<Json<AgentStateResponse>, AppError> {
+    let guard = app.state.read().await;
+
+    let active_chunks = guard
+        .running_chunks
+        .values()
+        .map(|chunk| RunningChunkView {
+            job_id: chunk.job_id.clone(),
+            chunk_id: chunk.chunk_id.clone(),
+            container_id: chunk.container_id.clone(),
+            status: chunk.status.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let response = AgentStateResponse {
+        node_id: guard.node_id.clone(),
+        status: guard.node_status.clone(),
+        is_idle: guard.is_idle,
+        running_chunks: guard.running_chunks_count(),
+        consecutive_preempt_spikes: guard.consecutive_preempt_spikes,
+        avg_cpu_window_pct: guard.avg_cpu_window(),
+        cpu_usage_pct: guard.metrics.cpu_usage_pct,
+        cpu_available_pct: guard.metrics.cpu_available_pct,
+        ram_total_mb: guard.metrics.ram_total_mb,
+        ram_available_mb: guard.metrics.ram_available_mb,
+        disk_available_gb: guard.metrics.disk_available_gb,
+        active_chunks,
+    };
+
+    Ok(Json(response))
 }
 
 async fn run_handler(

@@ -6,7 +6,15 @@ pub enum NodeStatus {
     Idle,
     Busy,
     Draining,
-    Preempting
+    Preempting,
+    Offline,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NetworkStatus {
+    Active,
+    Inactive,
+    Removed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,11 +30,12 @@ pub enum JobStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterNodeRequest {
-    pub node_id: String, // Unique identifier of the node registering with orchestrator.
-    pub network_id: String, // Target network this node belongs to (e.g., clg-a).
-    pub agent_url: String, // Base URL where this node's agent API is reachable.
-    pub region: Option<String>, // Optional deployment region (for locality-aware scheduling).
-    pub labels: Option<HashMap<String, String>> // Optional key/value metadata (gpu=true, tier=dev, etc.).
+    pub node_id: String,
+    pub network_id: String,
+    pub agent_url: String,
+    pub provider_wallet: Option<String>, // Provider's payout wallet address
+    pub region: Option<String>,
+    pub labels: Option<HashMap<String, String>>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,11 +59,12 @@ pub struct HeartbeatPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubmitJobRequest {
-    pub network_id: String, // Network where this job should be scheduled.
-    pub image: String, // Container image to run for this job.
-    pub command: Option<Vec<String>>, // Optional command override for container entrypoint.
-    pub cpu_limit: f64, // CPU allocation requested for job/chunk.
-    pub ram_limit_mb: u64 // RAM allocation requested in MB.
+    pub network_id: String,
+    pub user_wallet: String, // User's wallet address for billing
+    pub image: String,
+    pub command: Option<Vec<String>>,
+    pub cpu_limit: f64,
+    pub ram_limit_mb: u64
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +85,8 @@ pub struct NetworkRecord {
     pub network_id: String,
     pub name: String,
     pub description: Option<String>,
+    pub orchestrator_url: Option<String>,
+    pub status: NetworkStatus,
     pub created_at_epoch_secs: u64,
 }
 
@@ -118,29 +130,31 @@ pub struct ChunkStatusUpdate {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeRecord {
-    pub node_id: String, // Unique node identifier key.
-    pub network_id: String, // Network this node belongs to.
-    pub agent_url: String, // Agent base URL used by orchestrator to call /run and /stop.
-    pub region: Option<String>, // Optional node region for placement strategy.
-    pub labels: HashMap<String, String>, // Normalized node metadata labels.
-    pub status: NodeStatus, // Latest reported detailed node status.
-    pub is_idle: bool, // Latest reported idle flag.
-    pub cpu_available_pct: f32, // Latest available CPU percentage.
-    pub ram_available_mb: u64, // Latest available RAM in MB.
-    pub disk_available_gb: u64, // Latest available disk in GB.
-    pub running_chunks: usize, // Latest count of running chunks.
-    pub last_seen_epoch_secs: u64 // Last heartbeat timestamp (epoch seconds).
+    pub node_id: String,
+    pub network_id: String,
+    pub agent_url: String,
+    pub provider_wallet: Option<String>,
+    pub region: Option<String>,
+    pub labels: HashMap<String, String>,
+    pub status: NodeStatus,
+    pub is_idle: bool,
+    pub cpu_available_pct: f32,
+    pub ram_available_mb: u64,
+    pub disk_available_gb: u64,
+    pub running_chunks: usize,
+    pub last_seen_epoch_secs: u64
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
-    pub job_id: String, // Unique orchestrator-assigned job ID.
-    pub network_id: String, // Network where this job is scheduled.
-    pub image: String, // Requested container image for this job.
-    pub command: Option<Vec<String>>, // Optional command override for job run.
-    pub cpu_limit: f64, // Requested CPU limit for scheduling/run.
-    pub ram_limit_mb: u64, // Requested RAM limit in MB.
-    pub status: JobStatus, // Current lifecycle status of this job.
-    pub assigned_node_id: Option<String>, // Node currently assigned to run this job.
-    pub created_at_epoch_secs: u64 // Job creation timestamp (epoch seconds).
+    pub job_id: String,
+    pub network_id: String,
+    pub user_wallet: Option<String>,
+    pub image: String,
+    pub command: Option<Vec<String>>,
+    pub cpu_limit: f64,
+    pub ram_limit_mb: u64,
+    pub status: JobStatus,
+    pub assigned_node_id: Option<String>,
+    pub created_at_epoch_secs: u64
 }

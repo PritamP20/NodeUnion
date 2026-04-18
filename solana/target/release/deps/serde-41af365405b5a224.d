@@ -1,0 +1,14 @@
+/Users/pritamp20/Documents/NodeUnion/solana/target/release/deps/serde-41af365405b5a224.d: /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/pritamp20/Documents/NodeUnion/solana/target/release/build/serde-8ea0b9d4bf57b7c5/out/private.rs
+
+/Users/pritamp20/Documents/NodeUnion/solana/target/release/deps/libserde-41af365405b5a224.rlib: /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/pritamp20/Documents/NodeUnion/solana/target/release/build/serde-8ea0b9d4bf57b7c5/out/private.rs
+
+/Users/pritamp20/Documents/NodeUnion/solana/target/release/deps/libserde-41af365405b5a224.rmeta: /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /Users/pritamp20/Documents/NodeUnion/solana/target/release/build/serde-8ea0b9d4bf57b7c5/out/private.rs
+
+/Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/Users/pritamp20/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/Users/pritamp20/Documents/NodeUnion/solana/target/release/build/serde-8ea0b9d4bf57b7c5/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/pritamp20/Documents/NodeUnion/solana/target/release/build/serde-8ea0b9d4bf57b7c5/out

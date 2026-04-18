@@ -1,0 +1,1 @@
+{"rustc":13599730207768804761,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[3746573929696391749,"build_script_build",false,3146171687004854905]],"local":[{"RerunIfChanged":{"output":"debug/build/rayon-core-27fe0649aba4b5ae/output","paths":["build.rs"]}}],"rustflags":["--cfg","procmacro2_semver_exempt"],"config":0,"compile_kind":0}
