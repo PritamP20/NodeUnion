@@ -1,4 +1,6 @@
 /target
+/test-ledger/
+/solana/.anchor/test-ledger/
 DEPLOYMENT_COMPLETE.md
 DOCKER_TESTS_GUIDE.md
 SYSTEM_REGISTRATION.md
