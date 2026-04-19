@@ -99,9 +99,12 @@ pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
             command TEXT,
             cpu_limit FLOAT NOT NULL,
             ram_limit_mb BIGINT NOT NULL,
+            exposed_port BIGINT,
             status VARCHAR(50) NOT NULL DEFAULT 'Pending',
             assigned_node_id VARCHAR(255),
             created_at_epoch_secs BIGINT NOT NULL,
+            error_detail TEXT,
+            deploy_url VARCHAR(512),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (assigned_node_id) REFERENCES nodes(node_id) ON DELETE SET NULL
         )
@@ -111,6 +114,18 @@ pub async fn init_schema(pool: &DbPool) -> anyhow::Result<()> {
     .await?;
 
     sqlx::query("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_wallet VARCHAR(255)")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_detail TEXT")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS exposed_port BIGINT")
+        .execute(pool)
+        .await?;
+
+    sqlx::query("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deploy_url VARCHAR(512)")
         .execute(pool)
         .await?;
 

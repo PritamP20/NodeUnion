@@ -10,6 +10,31 @@ use std::collections::HashMap;
 use bollard::models::{HostConfig, PortBinding};
 use bollard::Docker;
 use crate::models::RunJobRequest;
+use serde::Deserialize;
+use std::process::{Command, Stdio};
+use tokio::time::{sleep, Duration};
+
+#[derive(Debug, Clone)]
+pub struct DeploymentResult {
+    pub container_id: String,
+    pub deploy_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NgrokTunnelsResponse {
+    tunnels: Vec<NgrokTunnel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NgrokTunnel {
+    public_url: String,
+    config: NgrokTunnelConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct NgrokTunnelConfig {
+    addr: String,
+}
 
 async fn ensure_image_available(docker: &Docker, image: &str) -> Result<()> {
     match docker.inspect_image(image).await {
@@ -35,7 +60,7 @@ async fn ensure_image_available(docker: &Docker, image: &str) -> Result<()> {
 /// Run a container with the specified configuration.
 /// If port_bindings is provided, maps container ports to host ports.
 /// Format for port_bindings: "8080/tcp" -> 8000 (container port -> host port)
-pub async fn run_container(docker: &Docker, req: &RunJobRequest) -> Result<String> {
+pub async fn run_container(docker: &Docker, req: &RunJobRequest) -> Result<DeploymentResult> {
     run_container_with_ports(docker, req, None).await
 }
 
@@ -46,7 +71,7 @@ pub async fn run_container_with_ports(
     docker: &Docker,
     req: &RunJobRequest,
     port_bindings: Option<HashMap<String, u16>>,
-) -> Result<String> {
+) -> Result<DeploymentResult> {
     ensure_image_available(docker, &req.image).await?;
 
     let name = format!("job-{}-{}", req.job_id, req.chunk_id);
@@ -69,6 +94,16 @@ pub async fn run_container_with_ports(
             }];
             port_bindings_map.insert(container_port, Some(binding));
         }
+    } else if let Some(exposed_port) = req.exposed_port {
+        let port_key = format!("{}/tcp", exposed_port);
+        exposed_ports.insert(port_key.clone(), HashMap::new());
+        port_bindings_map.insert(
+            port_key,
+            Some(vec![PortBinding {
+                host_ip: Some("127.0.0.1".to_string()),
+                host_port: Some(exposed_port.to_string()),
+            }]),
+        );
     }
 
     let host_config = HostConfig {
@@ -103,7 +138,76 @@ pub async fn run_container_with_ports(
         .await
         .with_context(|| format!("failed to start container {}", create_result.id))?;
 
-    Ok(create_result.id)
+    let deploy_url = if let Some(exposed_port) = req.exposed_port {
+        maybe_expose_with_ngrok(exposed_port).await
+    } else {
+        None
+    };
+
+    Ok(DeploymentResult {
+        container_id: create_result.id,
+        deploy_url,
+    })
+}
+
+fn should_auto_expose_with_ngrok() -> bool {
+    std::env::var("AUTO_NGROK_EXPOSE")
+        .ok()
+        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(true)
+}
+
+async fn maybe_expose_with_ngrok(port: u16) -> Option<String> {
+    if !should_auto_expose_with_ngrok() {
+        return None;
+    }
+
+    if !Command::new("ngrok")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    if let Some(existing) = find_ngrok_tunnel(port).await {
+        return Some(existing);
+    }
+
+    let _ = Command::new("ngrok")
+        .arg("http")
+        .arg(port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+
+    for _ in 0..12 {
+        if let Some(url) = find_ngrok_tunnel(port).await {
+            return Some(url);
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    None
+}
+
+async fn find_ngrok_tunnel(port: u16) -> Option<String> {
+    let url = std::env::var("NGROK_API_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:4040/api/tunnels".to_string());
+
+    let response = reqwest::get(url).await.ok()?;
+    let body = response.json::<NgrokTunnelsResponse>().await.ok()?;
+    let needle = format!(":{}", port);
+
+    body.tunnels
+        .into_iter()
+        .find(|tunnel| tunnel.config.addr.ends_with(&needle) || tunnel.config.addr == port.to_string())
+        .map(|tunnel| tunnel.public_url)
 }
 
 pub async fn stop_container(docker: &Docker, container_id: &str) -> Result<()> {

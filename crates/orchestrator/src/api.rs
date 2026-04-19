@@ -443,12 +443,18 @@ async fn submit_job_handler(
             command: payload.command.clone(),
             cpu_limit: payload.cpu_limit,
             ram_limit_mb: payload.ram_limit_mb,
+            exposed_port: payload.exposed_port,
             status: JobStatus::Pending,
             assigned_node_id: None,
             created_at_epoch_secs: now_epoch_secs(),
+            error_detail: None,
+            deploy_url: None,
         };
 
         guard.jobs.insert(job_id.clone(), job);
+        if let Some(port) = payload.exposed_port {
+            guard.job_exposed_ports.insert(job_id.clone(), port);
+        }
 
         (job_id.clone(), guard.jobs.get(&job_id).cloned().expect("job inserted"))
     };
@@ -465,7 +471,7 @@ async fn submit_job_handler(
     // Try immediate dispatch once; scheduler loop will retry pending jobs later.
     let _ = dispatch_job_to_idle_node(&app, &job_id).await;
 
-    let (status, assigned_node_id, message) = {
+    let (status, assigned_node_id, deploy_url, message, job_snapshot_for_persist) = {
         let guard = app.state.read().await;
         let job = guard.jobs.get(&job_id).ok_or_else(|| {
             (
@@ -480,31 +486,23 @@ async fn submit_job_handler(
             _ => "job accepted".to_string(),
         };
 
-        (job.status.clone(), job.assigned_node_id.clone(), message)
+        (
+            job.status.clone(),
+            job.assigned_node_id.clone(),
+            guard.job_deploy_urls.get(&job_id).cloned(),
+            message,
+            job.clone(),
+        )
     };
 
-    let _ = persist_job_state(
-        &app,
-        &JobRecord {
-            job_id: job_id.clone(),
-            network_id: payload.network_id,
-            user_wallet: Some(payload.user_wallet.clone()),
-            image: payload.image,
-            command: payload.command,
-            cpu_limit: payload.cpu_limit,
-            ram_limit_mb: payload.ram_limit_mb,
-            status: status.clone(),
-            assigned_node_id: assigned_node_id.clone(),
-            created_at_epoch_secs: now_epoch_secs(),
-        },
-    )
-    .await;
+    let _ = persist_job_state(&app, &job_snapshot_for_persist).await;
 
     Ok(Json(SubmitJobResponse {
         accepted: true,
         job_id,
         status,
         assigned_node_id,
+        deploy_url,
         message,
     }))
 }
@@ -613,24 +611,36 @@ async fn agent_chunk_status_handler(
     State(app): State<AppState>,
     Json(payload): Json<ChunkStatusUpdate>,
 ) -> StatusCode {
-    let mut guard = app.state.write().await;
+    let updated_job = {
+        let mut guard = app.state.write().await;
 
-    if let Some(job) = guard.jobs.get_mut(&payload.job_id) {
-        job.status = payload.status.clone();
+        if let Some(job) = guard.jobs.get_mut(&payload.job_id) {
+            job.status = payload.status.clone();
+            job.error_detail = payload.detail.clone();
+        }
+
+        if matches!(
+            payload.status,
+            JobStatus::Done | JobStatus::Failed | JobStatus::Preempted | JobStatus::Stopped
+        ) {
+            guard.job_exposed_ports.remove(&payload.job_id);
+            // Keep deploy_urls so the ngrok link persists in the job record
+        }
+
+        guard.jobs.get(&payload.job_id).cloned()
+    };
+
+    if let Some(job) = updated_job {
+        let _ = jobs_repo::update_job(&app.db, &job_record_to_row(&job)).await;
     }
-
-    drop(guard);
-
-    let _ = jobs_repo::update_job_status(&app.db, &payload.job_id, job_status_to_string(&payload.status)).await;
 
     StatusCode::OK
 }
 
 async fn dispatch_job_to_idle_node(app: &AppState, job_id: &str) -> Result<(), ()> {
-    let (node, run_payload, selected_node_snapshot, scheduled_job_snapshot, user_wallet) = {
-        let mut guard = app.state.write().await;
-
-        let job = match guard.jobs.get(job_id).cloned() {
+    let candidate_node_ids = {
+        let guard = app.state.read().await;
+        let job = match guard.jobs.get(job_id) {
             Some(j) => j,
             None => return Err(()),
         };
@@ -639,152 +649,182 @@ async fn dispatch_job_to_idle_node(app: &AppState, job_id: &str) -> Result<(), (
             return Ok(());
         }
 
-        let selected_node = match guard
+        guard
             .nodes
             .values()
-            .find(|n| {
+            .filter(|n| {
                 n.network_id == job.network_id
                     && n.is_idle
                     && matches!(n.status, NodeStatus::Idle)
                     && (n.agent_url.starts_with("http://") || n.agent_url.starts_with("https://"))
             })
-            .cloned()
-        {
-            Some(n) => n,
-            None => return Ok(()),
-        };
-
-        // Optimistically reserve node and mark job as scheduled before network call.
-        if let Some(node_mut) = guard.nodes.get_mut(&selected_node.node_id) {
-            node_mut.is_idle = false;
-            node_mut.status = NodeStatus::Busy;
-        }
-
-        if let Some(job_mut) = guard.jobs.get_mut(job_id) {
-            job_mut.status = JobStatus::Scheduled;
-            job_mut.assigned_node_id = Some(selected_node.node_id.clone());
-        }
-
-        let run_payload = RunJobRequest {
-            job_id: job.job_id,
-            // Use a unique chunk suffix per dispatch attempt so retries do not collide
-            // with stale container names on the agent.
-            chunk_id: format!("{}-chunk-{}", job_id, now_epoch_millis()),
-            image: job.image,
-            cpu_limit: job.cpu_limit,
-            ram_limit_mb: job.ram_limit_mb,
-            input_path: None,
-            command: job.command,
-            env: None,
-        };
-
-        let selected_node_snapshot = guard.nodes.get(&selected_node.node_id).cloned();
-        let scheduled_job_snapshot = guard.jobs.get(job_id).cloned();
-        let user_wallet = job.user_wallet.clone();
-
-        (
-            selected_node,
-            run_payload,
-            selected_node_snapshot,
-            scheduled_job_snapshot,
-            user_wallet,
-        )
+            .map(|n| n.node_id.clone())
+            .collect::<Vec<_>>()
     };
 
-    // Open escrow on-chain before dispatching to agent
-    if let Some(_provider_wallet) = &node.provider_wallet {
-        let estimated_units = (node.cpu_available_pct as u64 * 100) + (node.ram_available_mb / 10);
-        let escrow_wallet = user_wallet.unwrap_or_else(|| run_payload.job_id.clone());
-        let _ = app.solana
-            .open_escrow_on_chain(
-                job_id,
-                &node.network_id,
-                &node.node_id,
-                estimated_units,
-                estimated_units * 100, // rough token estimate
-                &escrow_wallet,
-            )
-            .await;
+    if candidate_node_ids.is_empty() {
+        return Ok(());
     }
 
-    if let Some(node_state) = selected_node_snapshot {
-        let _ = node_repo::register_node(&app.db, &node_record_to_row(&node_state)).await;
-    }
-    if let Some(job_state) = scheduled_job_snapshot {
-        let _ = persist_job_state(app, &job_state).await;
-    }
-
-    let run_url = format!("{}/run", node.agent_url.trim_end_matches('/'));
-    let send_result = app.http.post(run_url).json(&run_payload).send().await;
-
-    match send_result {
-        Ok(resp) if resp.status().is_success() => {
-            let parsed = resp.json::<RunJobResponse>().await;
-            if let Ok(agent_resp) = parsed {
-                let mut guard = app.state.write().await;
-                if let Some(job_mut) = guard.jobs.get_mut(job_id) {
-                    job_mut.status = agent_resp.status.clone();
-                }
-
-                let job_snapshot = guard.jobs.get(job_id).cloned();
-                drop(guard);
-
-                if let Some(job_state) = job_snapshot {
-                    let _ = persist_job_state(app, &job_state).await;
-                }
-            }
-            Ok(())
-        }
-        _ => {
-            // Dispatch failed: make node available again and reset job to pending for retry.
+    for candidate_node_id in candidate_node_ids {
+        let dispatch_ctx = {
             let mut guard = app.state.write().await;
 
-            if let Some(node_mut) = guard.nodes.get_mut(&node.node_id) {
-                node_mut.is_idle = true;
-                node_mut.status = NodeStatus::Idle;
+            let job = match guard.jobs.get(job_id).cloned() {
+                Some(j) => j,
+                None => return Err(()),
+            };
+
+            if !matches!(job.status, JobStatus::Pending) {
+                return Ok(());
+            }
+
+            let selected_node = match guard.nodes.get(&candidate_node_id).cloned() {
+                Some(n)
+                    if n.network_id == job.network_id
+                        && n.is_idle
+                        && matches!(n.status, NodeStatus::Idle)
+                        && (n.agent_url.starts_with("http://")
+                            || n.agent_url.starts_with("https://")) =>
+                {
+                    n
+                }
+                _ => continue,
+            };
+
+            // Optimistically reserve node and mark job as scheduled before network call.
+            if let Some(node_mut) = guard.nodes.get_mut(&selected_node.node_id) {
+                node_mut.is_idle = false;
+                node_mut.status = NodeStatus::Busy;
             }
 
             if let Some(job_mut) = guard.jobs.get_mut(job_id) {
-                job_mut.status = JobStatus::Pending;
-                job_mut.assigned_node_id = None;
+                job_mut.status = JobStatus::Scheduled;
+                job_mut.assigned_node_id = Some(selected_node.node_id.clone());
             }
 
-            let node_snapshot = guard.nodes.get(&node.node_id).cloned();
-            let job_snapshot = guard.jobs.get(job_id).cloned();
-            drop(guard);
+            let exposed_port = guard.job_exposed_ports.get(job_id).copied();
 
-            if let Some(node_state) = node_snapshot {
-                let _ = node_repo::register_node(&app.db, &node_record_to_row(&node_state)).await;
-            }
+            let run_payload = RunJobRequest {
+                job_id: job.job_id,
+                // Use a unique chunk suffix per dispatch attempt so retries do not collide
+                // with stale container names on the agent.
+                chunk_id: format!("{}-chunk-{}", job_id, now_epoch_millis()),
+                image: job.image,
+                cpu_limit: job.cpu_limit,
+                ram_limit_mb: job.ram_limit_mb,
+                input_path: None,
+                command: job.command,
+                env: None,
+                exposed_port,
+            };
 
-            if let Some(job_state) = job_snapshot {
-                let _ = persist_job_state(app, &job_state).await;
-            }
-            Err(())
+            let selected_node_snapshot = guard.nodes.get(&selected_node.node_id).cloned();
+            let scheduled_job_snapshot = guard.jobs.get(job_id).cloned();
+            let user_wallet = job.user_wallet.clone();
+
+            (
+                selected_node,
+                run_payload,
+                selected_node_snapshot,
+                scheduled_job_snapshot,
+                user_wallet,
+            )
+        };
+
+        let (node, run_payload, selected_node_snapshot, scheduled_job_snapshot, user_wallet) =
+            dispatch_ctx;
+
+        // Open escrow on-chain before dispatching to agent.
+        if let Some(_provider_wallet) = &node.provider_wallet {
+            let estimated_units = (node.cpu_available_pct as u64 * 100) + (node.ram_available_mb / 10);
+            let escrow_wallet = user_wallet.unwrap_or_else(|| run_payload.job_id.clone());
+            let _ = app.solana
+                .open_escrow_on_chain(
+                    job_id,
+                    &node.network_id,
+                    &node.node_id,
+                    estimated_units,
+                    estimated_units * 100, // rough token estimate
+                    &escrow_wallet,
+                )
+                .await;
+        }
+
+        if let Some(node_state) = selected_node_snapshot {
+            let _ = node_repo::register_node(&app.db, &node_record_to_row(&node_state)).await;
+        }
+        if let Some(job_state) = scheduled_job_snapshot {
+            let _ = persist_job_state(app, &job_state).await;
+        }
+
+        let run_url = format!("{}/run", node.agent_url.trim_end_matches('/'));
+        let send_result = app.http.post(run_url).json(&run_payload).send().await;
+
+        let dispatch_succeeded = match send_result {
+            Ok(resp) if resp.status().is_success() => match resp.json::<RunJobResponse>().await {
+                Ok(agent_resp) => {
+                    let mut guard = app.state.write().await;
+                    if let Some(job_mut) = guard.jobs.get_mut(job_id) {
+                        job_mut.status = agent_resp.status.clone();
+                        if let Some(url) = agent_resp.deploy_url.clone() {
+                            job_mut.deploy_url = Some(url.clone());
+                        }
+                    }
+                    if let Some(url) = agent_resp.deploy_url {
+                        guard.job_deploy_urls.insert(job_id.to_string(), url);
+                    }
+
+                    let job_snapshot = guard.jobs.get(job_id).cloned();
+                    drop(guard);
+
+                    if let Some(job_state) = job_snapshot {
+                        let _ = persist_job_state(app, &job_state).await;
+                    }
+                    true
+                }
+                Err(_) => false,
+            },
+            _ => false,
+        };
+
+        if dispatch_succeeded {
+            return Ok(());
+        }
+
+        // Dispatch failed on this node: make it available and continue trying other idle nodes.
+        let mut guard = app.state.write().await;
+
+        if let Some(node_mut) = guard.nodes.get_mut(&node.node_id) {
+            node_mut.is_idle = true;
+            node_mut.status = NodeStatus::Idle;
+        }
+
+        if let Some(job_mut) = guard.jobs.get_mut(job_id) {
+            job_mut.status = JobStatus::Pending;
+            job_mut.assigned_node_id = None;
+        }
+
+        let node_snapshot = guard.nodes.get(&node.node_id).cloned();
+        let job_snapshot = guard.jobs.get(job_id).cloned();
+        drop(guard);
+
+        if let Some(node_state) = node_snapshot {
+            let _ = node_repo::register_node(&app.db, &node_record_to_row(&node_state)).await;
+        }
+
+        if let Some(job_state) = job_snapshot {
+            let _ = persist_job_state(app, &job_state).await;
         }
     }
+
+    Ok(())
 }
 
 async fn persist_job_state(app: &AppState, job: &JobRecord) -> Result<(), ()> {
-    let result = match job.status {
-        JobStatus::Pending => jobs_repo::reset_job_to_pending(&app.db, &job.job_id).await,
-        JobStatus::Scheduled => {
-            if let Some(node_id) = &job.assigned_node_id {
-                jobs_repo::mark_job_scheduled(&app.db, &job.job_id, node_id).await
-            } else {
-                jobs_repo::update_job_status(&app.db, &job.job_id, job_status_to_string(&job.status)).await
-            }
-        }
-        JobStatus::Running => {
-            if let Some(node_id) = &job.assigned_node_id {
-                let _ = jobs_repo::mark_job_scheduled(&app.db, &job.job_id, node_id).await;
-            }
-            jobs_repo::mark_job_running(&app.db, &job.job_id).await
-        }
-        _ => jobs_repo::update_job_status(&app.db, &job.job_id, job_status_to_string(&job.status)).await,
-    };
-
-    result.map_err(|_| ())
+    jobs_repo::update_job(&app.db, &job_record_to_row(job))
+        .await
+        .map_err(|_| ())
 }
 
 fn node_record_to_row(node: &NodeRecord) -> NodeRow {
@@ -835,9 +875,12 @@ fn job_record_to_row(job: &JobRecord) -> JobRow {
             .and_then(|cmd| serde_json::to_string(&cmd).ok()),
         cpu_limit: job.cpu_limit,
         ram_limit_mb: job.ram_limit_mb as i64,
+        exposed_port: job.exposed_port.map(|port| port as i64),
         status: job_status_to_string(&job.status).to_string(),
         assigned_node_id: job.assigned_node_id.clone(),
         created_at_epoch_secs: job.created_at_epoch_secs as i64,
+        error_detail: job.error_detail.clone(),
+        deploy_url: job.deploy_url.clone(),
     }
 }
 
@@ -852,9 +895,12 @@ fn job_row_to_record(row: JobRow) -> JobRecord {
             .and_then(|cmd_json| serde_json::from_str::<Vec<String>>(&cmd_json).ok()),
         cpu_limit: row.cpu_limit,
         ram_limit_mb: row.ram_limit_mb as u64,
+        exposed_port: row.exposed_port.map(|port| port as u16),
         status: job_status_from_string(&row.status),
         assigned_node_id: row.assigned_node_id,
         created_at_epoch_secs: row.created_at_epoch_secs as u64,
+        error_detail: row.error_detail,
+        deploy_url: row.deploy_url,
     }
 }
 

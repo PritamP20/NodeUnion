@@ -10,6 +10,7 @@ type SubmitPayload = {
   cpu_limit: number;
   ram_limit_mb: number;
   command?: string[];
+  exposed_port?: number;
   orchestrator_url?: string;
 };
 
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest) {
         cpu_limit: payload.cpu_limit,
         ram_limit_mb: payload.ram_limit_mb,
         command: payload.command,
+        exposed_port: payload.exposed_port,
       }),
     });
   } catch {

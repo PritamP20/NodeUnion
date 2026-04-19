@@ -40,6 +40,7 @@ mod tests {
     fn test_config(base_url: String) -> Config {
         Config {
             node_id: "node-test".to_string(),
+            network_id: "default".to_string(),
             bind_addr: "127.0.0.1:8090".to_string(),
             orchestrator_base_url: base_url,
             heartbeat_interval_secs: 60,
@@ -63,6 +64,7 @@ mod tests {
 
         let payload = HeartbeatPayload {
             node_id: "node-1".to_string(),
+            network_id: "default".to_string(),
             cpu_available_pct: 88.0,
             ram_available_mb: 4096,
             disk_available_gb: 120,

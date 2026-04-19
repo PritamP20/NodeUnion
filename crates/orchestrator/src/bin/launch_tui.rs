@@ -3,6 +3,8 @@ use std::io::{self, Write};
 use std::net::{IpAddr, UdpSocket};
 use std::process::{Command, Stdio};
 
+use nodeunion_orchestrator::dashboard;
+
 fn prompt(label: &str, env_key: &str, default: &str) -> String {
     let current = env::var(env_key).unwrap_or_else(|_| default.to_string());
     print!("{} [{}]: ", label, current);
@@ -51,6 +53,41 @@ fn prompt_required(label: &str, env_key: &str) -> String {
     }
 }
 
+fn prompt_yes_no(label: &str, env_key: &str, default: bool) -> bool {
+    let default_label = if default { "Y/n" } else { "y/N" };
+    let current = env::var(env_key).ok();
+
+    loop {
+        if let Some(value) = &current {
+            print!("{} [{}]: ", label, value);
+        } else {
+            print!("{} [{}]: ", label, default_label);
+        }
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            return current
+                .as_deref()
+                .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y" | "on"))
+                .unwrap_or(default);
+        }
+
+        let trimmed = input.trim();
+        let selection = if trimmed.is_empty() {
+            current.clone().unwrap_or_else(|| default.to_string())
+        } else {
+            trimmed.to_string()
+        };
+
+        match selection.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "y" | "on" => return true,
+            "0" | "false" | "no" | "n" | "off" => return false,
+            _ => println!("Please answer yes or no."),
+        }
+    }
+}
+
 fn detect_local_ip() -> Option<IpAddr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
@@ -70,7 +107,7 @@ fn advertised_url(bind_addr: &str) -> Option<String> {
     Some(format!("http://{}:{}", public_host, port))
 }
 
-fn run_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<()> {
+fn spawn_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<std::process::Child> {
     let mut cmd = Command::new("nodeunion-orchestrator");
     cmd.stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -80,14 +117,8 @@ fn run_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<()> {
         cmd.env(k, v);
     }
 
-    match cmd.status() {
-        Ok(status) => {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("nodeunion-orchestrator exited with status {}", status))
-            }
-        }
+    match cmd.spawn() {
+        Ok(child) => Ok(child),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             let mut fallback = Command::new("cargo");
             fallback
@@ -104,14 +135,19 @@ fn run_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<()> {
                 fallback.env(k, v);
             }
 
-            let status = fallback.status()?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("fallback cargo run exited with status {}", status))
-            }
+            Ok(fallback.spawn()?)
         }
         Err(err) => Err(err.into()),
+    }
+}
+
+fn run_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<()> {
+    let mut child = spawn_orchestrator(vars)?;
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("nodeunion-orchestrator exited with status {}", status))
     }
 }
 
@@ -150,6 +186,12 @@ fn main() -> anyhow::Result<()> {
         "ORCHESTRATOR_PUBLIC_URL",
         &default_public_url,
     );
+    let orchestrator_dashboard_url = orchestrator_public_url.clone();
+    let open_dashboard_after_start = prompt_yes_no(
+        "Open live dashboard after startup",
+        "OPEN_DASHBOARD_AFTER_START",
+        true,
+    );
 
     let vars = vec![
         ("DATABASE_URL", database_url),
@@ -170,5 +212,16 @@ fn main() -> anyhow::Result<()> {
         println!();
     }
     println!("Starting orchestrator...");
-    run_orchestrator(&vars)
+
+    if open_dashboard_after_start {
+        let mut child = spawn_orchestrator(&vars)?;
+        let dashboard_result = tokio::runtime::Runtime::new()?
+            .block_on(dashboard::run(orchestrator_dashboard_url))
+            .map_err(anyhow::Error::from);
+        let _ = child.kill();
+        let _ = child.wait();
+        dashboard_result
+    } else {
+        run_orchestrator(&vars)
+    }
 }

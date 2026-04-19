@@ -29,6 +29,7 @@ pub struct RunJobRequest {
     pub input_path: Option<String>,
     pub command: Option<Vec<String>>,
     pub env: Option<Vec<String>>,
+    pub exposed_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +37,7 @@ pub struct RunJobResponse {
     pub accepted: bool,
     pub message: String,
     pub container_id: Option<String>,
+    pub deploy_url: Option<String>,
     pub status: JobStatus,
 }
 

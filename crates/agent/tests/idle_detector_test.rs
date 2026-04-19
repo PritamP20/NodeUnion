@@ -29,6 +29,7 @@ fn create_test_app_state() -> Arc<RwLock<AppState>> {
 fn create_test_config() -> Config {
     Config {
         node_id: "test-node".to_string(),
+        network_id: "default".to_string(),
         bind_addr: "127.0.0.1:8090".to_string(),
         orchestrator_base_url: "http://127.0.0.1:8080".to_string(),
         heartbeat_interval_secs: 60,

@@ -60,6 +60,41 @@ fn prompt_required(label: &str, env_key: &str) -> String {
     }
 }
 
+fn prompt_yes_no(label: &str, env_key: &str, default: bool) -> bool {
+    let default_label = if default { "Y/n" } else { "y/N" };
+    let current = env::var(env_key).ok();
+
+    loop {
+        if let Some(value) = &current {
+            print!("{} [{}]: ", label, value);
+        } else {
+            print!("{} [{}]: ", label, default_label);
+        }
+        let _ = io::stdout().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            return current
+                .as_deref()
+                .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "y" | "on"))
+                .unwrap_or(default);
+        }
+
+        let trimmed = input.trim();
+        let selection = if trimmed.is_empty() {
+            current.clone().unwrap_or_else(|| default.to_string())
+        } else {
+            trimmed.to_string()
+        };
+
+        match selection.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "y" | "on" => return true,
+            "0" | "false" | "no" | "n" | "off" => return false,
+            _ => println!("Please answer yes or no."),
+        }
+    }
+}
+
 fn is_bind_available(bind_addr: &str) -> bool {
     TcpListener::bind(bind_addr).is_ok()
 }
@@ -84,6 +119,14 @@ fn choose_bind_addr(default_addr: &str, env_key: &str) -> String {
             }
         }
     }
+}
+
+fn local_agent_url(bind_addr: &str) -> String {
+    let port = bind_addr
+        .rsplit_once(':')
+        .map(|(_, port)| port)
+        .unwrap_or("8090");
+    format!("http://127.0.0.1:{}", port)
 }
 
 fn prompt_network_choice(networks: &[NetworkOption], env_key: &str) -> String {
@@ -152,7 +195,7 @@ async fn fetch_networks(orchestrator_base_url: &str) -> anyhow::Result<Vec<Netwo
     Ok(networks)
 }
 
-fn run_agent(vars: &[(&str, String)]) -> anyhow::Result<()> {
+fn spawn_agent(vars: &[(&str, String)]) -> anyhow::Result<std::process::Child> {
     let mut cmd = Command::new("nodeunion-agent");
     cmd.stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -162,14 +205,8 @@ fn run_agent(vars: &[(&str, String)]) -> anyhow::Result<()> {
         cmd.env(k, v);
     }
 
-    match cmd.status() {
-        Ok(status) => {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("nodeunion-agent exited with status {}", status))
-            }
-        }
+    match cmd.spawn() {
+        Ok(child) => Ok(child),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             let mut fallback = Command::new("cargo");
             fallback
@@ -185,6 +222,47 @@ fn run_agent(vars: &[(&str, String)]) -> anyhow::Result<()> {
             for (k, v) in vars {
                 fallback.env(k, v);
             }
+
+            Ok(fallback.spawn()?)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn run_agent(vars: &[(&str, String)]) -> anyhow::Result<()> {
+    let mut child = spawn_agent(vars)?;
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("nodeunion-agent exited with status {}", status))
+    }
+}
+
+fn run_agent_local_tui(orchestrator_base_url: &str) -> anyhow::Result<()> {
+    let mut cmd = Command::new("nodeunion-agent-local-tui");
+    cmd.stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .env("AGENT_URL", orchestrator_base_url)
+        .env("AGENT_TUI_SKIP_PROMPT", "1");
+
+    match cmd.status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(anyhow::anyhow!("nodeunion-agent-local-tui exited with status {}", status)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            let mut fallback = Command::new("cargo");
+            fallback
+                .arg("run")
+                .arg("-p")
+                .arg("nodeunion-agent")
+                .arg("--bin")
+                .arg("nodeunion-agent-local-tui")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .env("AGENT_URL", orchestrator_base_url)
+                .env("AGENT_TUI_SKIP_PROMPT", "1");
 
             let status = fallback.status()?;
             if status.success() {
@@ -216,6 +294,11 @@ fn main() -> anyhow::Result<()> {
             prompt_required("NETWORK_ID (which network this node joins)", "NETWORK_ID")
         }
     };
+    let provider_wallet = prompt(
+        "PROVIDER_WALLET (optional payout wallet for this node)",
+        "PROVIDER_WALLET",
+        "",
+    );
     let bind_addr = choose_bind_addr("0.0.0.0:8090", "AGENT_BIND_ADDR");
     let heartbeat_interval_secs = prompt("HEARTBEAT_INTERVAL_SECS", "HEARTBEAT_INTERVAL_SECS", "60");
     let metrics_poll_interval_secs = prompt("METRICS_POLL_INTERVAL_SECS", "METRICS_POLL_INTERVAL_SECS", "30");
@@ -223,12 +306,19 @@ fn main() -> anyhow::Result<()> {
     let preempt_cpu_threshold_pct = prompt("PREEMPT_CPU_THRESHOLD_PCT", "PREEMPT_CPU_THRESHOLD_PCT", "60.0");
     let idle_window_samples = prompt("IDLE_WINDOW_SAMPLES", "IDLE_WINDOW_SAMPLES", "10");
     let request_timeout_secs = prompt("REQUEST_TIMEOUT_SECS", "REQUEST_TIMEOUT_SECS", "10");
+    let dashboard_agent_url = local_agent_url(&bind_addr);
+    let open_dashboard_after_start = prompt_yes_no(
+        "Open live dashboard after startup",
+        "OPEN_DASHBOARD_AFTER_START",
+        true,
+    );
 
     let vars = vec![
         ("NODE_ID", node_id),
         ("NETWORK_ID", network_id),
+        ("PROVIDER_WALLET", provider_wallet),
         ("AGENT_BIND_ADDR", bind_addr),
-        ("ORCHESTRATOR_BASE_URL", orchestrator_base_url),
+        ("ORCHESTRATOR_BASE_URL", orchestrator_base_url.clone()),
         ("HEARTBEAT_INTERVAL_SECS", heartbeat_interval_secs),
         ("METRICS_POLL_INTERVAL_SECS", metrics_poll_interval_secs),
         ("IDLE_CPU_THRESHOLD_PCT", idle_cpu_threshold_pct),
@@ -239,5 +329,14 @@ fn main() -> anyhow::Result<()> {
 
     println!();
     println!("Starting agent...");
-    run_agent(&vars)
+
+    if open_dashboard_after_start {
+        let mut child = spawn_agent(&vars)?;
+        let dashboard_result = run_agent_local_tui(&dashboard_agent_url);
+        let _ = child.kill();
+        let _ = child.wait();
+        dashboard_result
+    } else {
+        run_agent(&vars)
+    }
 }

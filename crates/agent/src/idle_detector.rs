@@ -1,5 +1,6 @@
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use sysinfo::System;
+use sysinfo::{Disks, System};
 use tokio::time::sleep;
 use crate::app_state::SharedAppState;
 use crate::config::Config;
@@ -49,9 +50,27 @@ pub async fn run_idle_detector(state: SharedAppState, config: Config) {
     loop {
         system.refresh_cpu();
         system.refresh_memory();
+        let disks = Disks::new_with_refreshed_list();
         let cpu_usage_pct = system.global_cpu_info().cpu_usage();
-        let total_mem_mb = bytes_to_mb(system.total_memory());
-        let available_mem_mb = bytes_to_mb(system.available_memory());
+        let total_mem_bytes = system.total_memory().max(macos_total_memory_bytes().unwrap_or(0));
+        let total_mem_mb = bytes_to_mb(total_mem_bytes);
+        let available_mem_bytes = system.available_memory();
+        let fallback_available_bytes = system
+            .free_memory()
+            .max(system.total_memory().saturating_sub(system.used_memory()));
+        let macos_available_bytes = macos_available_memory_bytes().unwrap_or(0);
+        let available_mem_mb = bytes_to_mb(
+            available_mem_bytes
+                .max(fallback_available_bytes)
+                .max(macos_available_bytes),
+        );
+        let disk_available_gb = bytes_to_gb(
+            disks
+                .iter()
+                .map(|disk| disk.available_space())
+                .max()
+                .unwrap_or(0),
+        );
         let cpu_available_pct = (100.0_f32 - cpu_usage_pct).max(0.0);
         let now_epoch = now_epoch_secs();
 
@@ -61,6 +80,7 @@ pub async fn run_idle_detector(state: SharedAppState, config: Config) {
             guard.metrics.cpu_available_pct = cpu_available_pct;
             guard.metrics.ram_total_mb = total_mem_mb;
             guard.metrics.ram_available_mb = available_mem_mb;
+            guard.metrics.disk_available_gb = disk_available_gb;
             guard.push_cpu_sample(cpu_usage_pct, config.idle_window_samples);
             let avg_cpu = guard.avg_cpu_window().unwrap_or(cpu_usage_pct);
 
@@ -98,6 +118,76 @@ fn now_epoch_secs() -> u64 {
 
 fn bytes_to_mb(bytes: u64) -> u64 {
     bytes / (1024 * 1024)
+}
+
+fn bytes_to_gb(bytes: u64) -> u64 {
+    bytes / (1024 * 1024 * 1024)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_total_memory_bytes() -> Option<u64> {
+    let output = Command::new("sysctl").arg("-n").arg("hw.memsize").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8(output.stdout).ok()?;
+    value.trim().parse::<u64>().ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_total_memory_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn macos_available_memory_bytes() -> Option<u64> {
+    let output = Command::new("vm_stat").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8(output.stdout).ok()?;
+    let page_size = parse_vm_stat_page_size(&text)?;
+    let free_pages = parse_vm_stat_pages(&text, "Pages free")?;
+    let inactive_pages = parse_vm_stat_pages(&text, "Pages inactive")?;
+    let speculative_pages = parse_vm_stat_pages(&text, "Pages speculative")?;
+
+    Some((free_pages + inactive_pages + speculative_pages) * page_size)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_available_memory_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn parse_vm_stat_page_size(text: &str) -> Option<u64> {
+    for line in text.lines() {
+        if let Some(value) = line.split_once("page size of") {
+            return value.1.split_whitespace().next()?.parse::<u64>().ok();
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn parse_vm_stat_pages(text: &str, key: &str) -> Option<u64> {
+    for line in text.lines() {
+        if line.trim_start().starts_with(key) {
+            let value = line
+                .split_once(':')?
+                .1
+                .trim()
+                .trim_end_matches('.')
+                .parse::<u64>()
+                .ok()?;
+            return Some(value);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ async fn create_test_app_state() -> (SharedAppState, nodeunion_agent::api::AppAp
 
     let config = Config {
         node_id: "test-node-1".to_string(),
+        network_id: "default".to_string(),
         bind_addr: "127.0.0.1:8090".to_string(),
         orchestrator_base_url: "http://127.0.0.1:8080".to_string(),
         heartbeat_interval_secs: 60,
@@ -78,6 +79,7 @@ async fn run_endpoint_rejects_empty_image() {
         image: "".to_string(), // Empty image should fail validation
         cpu_limit: 1.0,
         ram_limit_mb: 512,
+        exposed_port: None,
         input_path: None,
         command: None,
         env: None,

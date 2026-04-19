@@ -65,7 +65,8 @@ pub struct SubmitJobRequest {
     pub image: String,
     pub command: Option<Vec<String>>,
     pub cpu_limit: f64,
-    pub ram_limit_mb: u64
+    pub ram_limit_mb: u64,
+    pub exposed_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +98,7 @@ pub struct SubmitJobResponse {
     pub job_id: String, // Generated job ID assigned by orchestrator.
     pub status: JobStatus, // Initial scheduling/execution status of the job.
     pub assigned_node_id: Option<String>, // Node chosen for the job, if already assigned.
+    pub deploy_url: Option<String>, // Public deployment URL (for web services), when available.
     pub message: String // Human-readable scheduling result details.
 }
 
@@ -109,7 +111,8 @@ pub struct RunJobRequest {
     pub ram_limit_mb: u64, // RAM limit in MB to enforce for container.
     pub input_path: Option<String>, // Optional input data path/object for worker.
     pub command: Option<Vec<String>>, // Optional command override for execution.
-    pub env: Option<Vec<String>> // Optional environment variables for container.
+    pub env: Option<Vec<String>>, // Optional environment variables for container.
+    pub exposed_port: Option<u16>, // Optional service port exposed by the workload.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +120,7 @@ pub struct RunJobResponse {
     pub accepted: bool, // Whether agent accepted chunk launch.
     pub message: String, // Human-readable launch/validation result.
     pub container_id: Option<String>, // Created container ID when launch succeeds.
+    pub deploy_url: Option<String>, // Public deployment URL (for web services), when available.
     pub status: JobStatus // Current chunk/job status after request handling.
 }
 
@@ -155,7 +159,10 @@ pub struct JobRecord {
     pub command: Option<Vec<String>>,
     pub cpu_limit: f64,
     pub ram_limit_mb: u64,
+    pub exposed_port: Option<u16>,
     pub status: JobStatus,
     pub assigned_node_id: Option<String>,
-    pub created_at_epoch_secs: u64
+    pub created_at_epoch_secs: u64,
+    pub error_detail: Option<String>,
+    pub deploy_url: Option<String>,
 }

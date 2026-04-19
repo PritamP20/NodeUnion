@@ -79,7 +79,7 @@ async fn run_handler(
         return Err(AppError::bad_request("image cannot be empty"));
     }
 
-    let container_id = run_container(&app.docker, &payload)
+    let deployment = run_container(&app.docker, &payload)
         .await
         .map_err(AppError::from)?;
 
@@ -91,7 +91,7 @@ async fn run_handler(
             crate::app_state::RunningChunk {
                 job_id: payload.job_id.clone(),
                 chunk_id: payload.chunk_id.clone(),
-                container_id: container_id.clone(),
+                container_id: deployment.container_id.clone(),
                 status: crate::models::JobStatus::Running,
             },
         );
@@ -99,8 +99,13 @@ async fn run_handler(
 
     Ok(Json(RunJobResponse {
         accepted: true,
-        message: "container started".to_string(),
-        container_id: Some(container_id),
+        message: if let Some(url) = &deployment.deploy_url {
+            format!("container started; public url: {}", url)
+        } else {
+            "container started".to_string()
+        },
+        container_id: Some(deployment.container_id),
+        deploy_url: deployment.deploy_url,
         status: JobStatus::Running,
     }))
 }

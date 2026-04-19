@@ -36,9 +36,12 @@ pub struct JobRow {
     pub command: Option<String>,
     pub cpu_limit: f64,
     pub ram_limit_mb: i64,
+    pub exposed_port: Option<i64>,
     pub status: String,
     pub assigned_node_id: Option<String>,
     pub created_at_epoch_secs: i64,
+    pub error_detail: Option<String>,
+    pub deploy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

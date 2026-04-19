@@ -8,7 +8,9 @@ pub struct OrchestratorState {
     pub networks: HashMap<String, NetworkRecord>,
     pub nodes: HashMap<String, NodeRecord>,
     pub jobs: HashMap<String, JobRecord>,
-    pub next_job_seq: u64
+    pub next_job_seq: u64,
+    pub job_exposed_ports: HashMap<String, u16>,
+    pub job_deploy_urls: HashMap<String, String>,
 }
 
 pub type SharedState = Arc<RwLock<OrchestratorState>>;

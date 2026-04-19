@@ -6,8 +6,8 @@ pub async fn create_job(pool: &DbPool, job: &JobRow) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO jobs (
-            job_id, network_id, user_wallet, image, command, cpu_limit, ram_limit_mb, status, assigned_node_id, created_at_epoch_secs
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            job_id, network_id, user_wallet, image, command, cpu_limit, ram_limit_mb, exposed_port, status, assigned_node_id, created_at_epoch_secs, error_detail, deploy_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#,
     )
     .bind(&job.job_id)
@@ -17,9 +17,12 @@ pub async fn create_job(pool: &DbPool, job: &JobRow) -> Result<()> {
     .bind(&job.command)
     .bind(job.cpu_limit)
     .bind(job.ram_limit_mb)
+    .bind(job.exposed_port)
     .bind(&job.status)
     .bind(&job.assigned_node_id)
     .bind(job.created_at_epoch_secs)
+    .bind(&job.error_detail)
+    .bind(&job.deploy_url)
     .execute(pool)
     .await?;
     Ok(())
@@ -83,6 +86,25 @@ pub async fn update_job_status(pool: &DbPool, job_id: &str, status: &str) -> Res
         .bind(job_id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+pub async fn update_job(pool: &DbPool, job: &JobRow) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE jobs
+        SET status = $1, error_detail = $2, assigned_node_id = $3, deploy_url = $4, exposed_port = $5
+        WHERE job_id = $6
+        "#,
+    )
+    .bind(&job.status)
+    .bind(&job.error_detail)
+    .bind(&job.assigned_node_id)
+    .bind(&job.deploy_url)
+    .bind(job.exposed_port)
+    .bind(&job.job_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

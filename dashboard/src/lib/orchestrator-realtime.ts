@@ -117,6 +117,7 @@ export async function submitJob(payload: {
   cpu_limit: number;
   ram_limit_mb: number;
   command?: string[];
+  exposed_port?: number;
   orchestrator_url?: string;
 }) {
   const response = await fetch(`${MAIN_API_BASE}/submit-job`, {
@@ -137,6 +138,7 @@ export async function submitJob(payload: {
     accepted: boolean;
     job_id: string;
     status: string;
+    deploy_url?: string | null;
     message: string;
   };
 }
