@@ -147,6 +147,7 @@ export default function NetworksPage() {
             summary:
               network.description ||
               `${toTitleCase(network.status)} network from ${sourceKey.replace(/^https?:\/\//, "")}`,
+            orchestratorUrl: network.orchestrator_url || undefined,
             onlineNodes,
             offlineNodes,
             activeJobs,
@@ -166,6 +167,7 @@ export default function NetworksPage() {
               ramUsageGb: Math.round(node.ram_available_mb / 1024),
               lastHeartbeat: formatRelativeTime(node.last_seen_epoch_secs),
               providerWallet: node.provider_wallet || "unknown",
+              agentUrl: node.agent_url || undefined,
             })),
           } satisfies NetworkCard;
         });
@@ -376,6 +378,9 @@ export default function NetworksPage() {
             <div className="rounded-full border border-white/5 bg-white/5 px-3 py-2">
               <span className="text-slate-500">Jobs</span> {selectedNetwork.activeJobs}
             </div>
+            <div className="max-w-full truncate rounded-full border border-white/5 bg-white/5 px-3 py-2" title={selectedNetwork.orchestratorUrl || "unknown"}>
+              <span className="text-slate-500">Orchestrator</span> {selectedNetwork.orchestratorUrl || "unknown"}
+            </div>
           </div>
         </article>
 
@@ -394,6 +399,7 @@ export default function NetworksPage() {
                   <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">CPU / RAM</th>
                   <th className="px-4 py-3 font-medium">Last heartbeat</th>
+                  <th className="px-4 py-3 font-medium">Public URL</th>
                   <th className="px-4 py-3 font-medium">Provider wallet</th>
                 </tr>
               </thead>
@@ -405,6 +411,9 @@ export default function NetworksPage() {
                     <td className={`px-4 py-4 font-semibold ${statusTone(node.status)}`}>{node.status}</td>
                     <td className="px-4 py-4">{node.cpuUsagePct}% / {node.ramUsageGb} GB</td>
                     <td className="px-4 py-4">{node.lastHeartbeat}</td>
+                    <td className="max-w-[260px] truncate px-4 py-4" title={node.agentUrl || "unknown"}>
+                      {node.agentUrl || "unknown"}
+                    </td>
                     <td className="px-4 py-4 font-mono text-xs text-slate-400">{truncateWallet(node.providerWallet)}</td>
                   </tr>
                 ))}

@@ -15,6 +15,7 @@ type NetworkRecord = {
 type NodeRecord = {
   node_id: string;
   network_id: string;
+  agent_url?: string | null;
   provider_wallet?: string | null;
   region?: string | null;
   status: string;
@@ -150,7 +151,7 @@ async function fetchFromSource(baseUrl: string, wallet?: string | null) {
       ...item,
       orchestrator_url: item.orchestrator_url || baseUrl,
     })),
-    nodes: nodes.map((item) => ({ ...item, orchestrator_url: baseUrl })),
+    nodes: nodes.map((item) => ({ ...item, agent_url: item.agent_url ?? null, orchestrator_url: baseUrl })),
     jobs: jobs.map((item) => ({ ...item, orchestrator_url: baseUrl })),
     entitlements: entitlements.map((item) => ({ ...item, orchestrator_url: baseUrl })),
     settlements: settlements.map((item) => ({ ...item, orchestrator_url: baseUrl })),

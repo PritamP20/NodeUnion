@@ -35,6 +35,7 @@ impl Default for NodeMetricsSnapshot {
 #[derive(Debug)]
 pub struct AppState {
     pub node_id: String,
+    pub public_url: Option<String>,
     pub node_status: NodeStatus, // Idle, Busy, Draining, Preempting.
     pub is_idle: bool, // Fast boolean flag used in scheduling filters and heartbeat.
     pub consecutive_preempt_spikes: usize, // Counts consecutive high-CPU samples to decide preemption trigger.
@@ -48,6 +49,7 @@ impl AppState {
     pub fn new(node_id: String, idle_window_capacity: usize) -> Self {
         Self {
             node_id,
+            public_url: None,
             node_status: NodeStatus::Idle,
             is_idle: true,
             consecutive_preempt_spikes: 0,

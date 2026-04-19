@@ -150,6 +150,26 @@ fn node_age_secs(node: &NodeRecord, now: u64) -> u64 {
     now.saturating_sub(node.last_seen_epoch_secs)
 }
 
+fn compact_agent_url(url: &str, max_len: usize) -> String {
+    if url.len() <= max_len {
+        return url.to_string();
+    }
+
+    if max_len <= 3 {
+        return "...".to_string();
+    }
+
+    format!("{}...", &url[..max_len - 3])
+}
+
+fn snapshot_public_url(snapshot: &Snapshot) -> Option<String> {
+    snapshot
+        .networks
+        .iter()
+        .find_map(|network| network.orchestrator_url.clone())
+        .map(|url| compact_agent_url(&url, 72))
+}
+
 fn render_header(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot, base_url: &str) {
     let health_color = if snapshot.healthy { Color::Green } else { Color::Red };
     let status_text = if snapshot.healthy { "ONLINE" } else { "OFFLINE" };
@@ -160,12 +180,18 @@ fn render_header(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot, base_ur
         Span::styled(status_text, Style::default().fg(health_color).add_modifier(Modifier::BOLD)),
     ]);
 
+    let public_url = snapshot_public_url(snapshot).unwrap_or_else(|| "(not available yet)".to_string());
+
     let body = vec![
         Line::from(vec![
             Span::styled("orchestrator ", Style::default().fg(Color::DarkGray)),
             Span::raw(base_url.to_string()),
             Span::styled("   refresh ", Style::default().fg(Color::DarkGray)),
             Span::raw(snapshot.fetched_at_epoch.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("public url ", Style::default().fg(Color::DarkGray)),
+            Span::styled(public_url, Style::default().fg(Color::Cyan)),
         ]),
         Line::from(vec![
             Span::styled("controls ", Style::default().fg(Color::DarkGray)),
@@ -267,7 +293,7 @@ fn render_nodes(area: Rect, frame: &mut Frame<'_>, nodes: &[NodeRecord]) {
         .unwrap_or(0);
 
     let rows = if nodes.is_empty() {
-        vec![Row::new(vec!["No nodes registered yet", "-", "-", "-", "-", "-", "-"])]
+        vec![Row::new(vec!["No nodes registered yet", "-", "-", "-", "-", "-", "-", "-"])]
     } else {
         nodes
             .iter()
@@ -281,6 +307,7 @@ fn render_nodes(area: Rect, frame: &mut Frame<'_>, nodes: &[NodeRecord]) {
                     format!("{:.1}%", node.cpu_available_pct),
                     format!("{} MB", node.ram_available_mb),
                     format!("{}", node.running_chunks),
+                    compact_agent_url(&node.agent_url, 44),
                 ])
                 .style(node_status_style(&node.status))
             })
@@ -297,11 +324,21 @@ fn render_nodes(area: Rect, frame: &mut Frame<'_>, nodes: &[NodeRecord]) {
             Constraint::Length(11),
             Constraint::Length(14),
             Constraint::Length(8),
+            Constraint::Min(28),
         ],
     )
     .header(
-        Row::new(vec!["Node", "Network", "Status", "Idle", "CPU Avail", "RAM Avail", "Chunks"])
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Row::new(vec![
+            "Node",
+            "Network",
+            "Status",
+            "Idle",
+            "CPU Avail",
+            "RAM Avail",
+            "Chunks",
+            "Public URL",
+        ])
+        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     )
     .block(Block::default().borders(Borders::ALL).title("Nodes"))
     .column_spacing(1);
@@ -390,7 +427,7 @@ fn render_dashboard(frame: &mut Frame<'_>, snapshot: &Snapshot, base_url: &str) 
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(5),
+            Constraint::Length(6),
             Constraint::Length(8),
             Constraint::Min(10),
         ])

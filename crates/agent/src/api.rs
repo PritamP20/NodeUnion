@@ -55,6 +55,7 @@ async fn state_handler(
 
     let response = AgentStateResponse {
         node_id: guard.node_id.clone(),
+        public_url: guard.public_url.clone(),
         status: guard.node_status.clone(),
         is_idle: guard.is_idle,
         running_chunks: guard.running_chunks_count(),

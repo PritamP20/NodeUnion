@@ -21,6 +21,16 @@ export SOLANA_PAYER_KEYPAIR="$HOME/.config/solana/id.json"
 export SOLANA_PROGRAM_ID="<PROGRAM_ID>"
 ```
 
+Optional public URL settings:
+
+```bash
+# Explicit public URL (recommended when you already have a tunnel/domain)
+export ORCHESTRATOR_PUBLIC_URL="https://your-public-orchestrator-url.example.com"
+
+# Or let orchestrator auto-create a Cloudflare quick tunnel and use that URL
+export ORCHESTRATOR_PUBLIC_URL_PROVIDER="cloudflare"
+```
+
 Start the orchestrator:
 
 ```bash

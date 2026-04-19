@@ -13,6 +13,7 @@ export type OrchestratorNetwork = {
 export type OrchestratorNode = {
   node_id: string;
   network_id: string;
+  agent_url?: string | null;
   provider_wallet?: string | null;
   region?: string | null;
   status: "Idle" | "Busy" | "Draining" | "Preempting" | "Offline";

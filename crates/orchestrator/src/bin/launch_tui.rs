@@ -107,11 +107,113 @@ fn advertised_url(bind_addr: &str) -> Option<String> {
     Some(format!("http://{}:{}", public_host, port))
 }
 
-fn spawn_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<std::process::Child> {
+fn local_dashboard_url(bind_addr: &str) -> String {
+    let (_, port) = bind_addr.rsplit_once(':').unwrap_or(("0.0.0.0", "8080"));
+    format!("http://127.0.0.1:{}", port)
+}
+
+fn command_exists(name: &str) -> bool {
+    Command::new(name)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
+}
+
+fn try_install_cloudflared() -> anyhow::Result<bool> {
+    if command_exists("cloudflared") {
+        return Ok(true);
+    }
+
+    if cfg!(target_os = "windows") {
+        if command_exists("winget") {
+            println!("cloudflared not found. Attempting install via winget...");
+            let status = Command::new("winget")
+                .arg("install")
+                .arg("--id")
+                .arg("Cloudflare.cloudflared")
+                .arg("-e")
+                .arg("--accept-source-agreements")
+                .arg("--accept-package-agreements")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?;
+
+            if status.success() && command_exists("cloudflared") {
+                return Ok(true);
+            }
+        }
+
+        if command_exists("choco") {
+            println!("cloudflared not found. Attempting install via choco...");
+            let status = Command::new("choco")
+                .arg("install")
+                .arg("cloudflared")
+                .arg("-y")
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?;
+
+            if status.success() && command_exists("cloudflared") {
+                return Ok(true);
+            }
+        }
+    }
+
+    if command_exists("brew") {
+        println!("cloudflared not found. Attempting install via brew...");
+        let status = Command::new("brew")
+            .arg("install")
+            .arg("cloudflared")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        if status.success() && command_exists("cloudflared") {
+            return Ok(true);
+        }
+    }
+
+    if command_exists("apt-get") {
+        println!("cloudflared not found. Attempting install via apt-get...");
+        let update = Command::new("sudo")
+            .arg("apt-get")
+            .arg("update")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+
+        let install = Command::new("sudo")
+            .arg("apt-get")
+            .arg("install")
+            .arg("-y")
+            .arg("cloudflared")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+
+        if update.success() && install.success() && command_exists("cloudflared") {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn spawn_orchestrator(vars: &[(&str, String)], quiet_output: bool) -> anyhow::Result<std::process::Child> {
     let mut cmd = Command::new("nodeunion-orchestrator");
-    cmd.stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    cmd.stdin(Stdio::inherit());
+
+    if quiet_output {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    } else {
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    }
 
     for (k, v) in vars {
         cmd.env(k, v);
@@ -127,9 +229,13 @@ fn spawn_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<std::process::C
                 .arg("nodeunion-orchestrator")
                 .arg("--bin")
                 .arg("nodeunion-orchestrator")
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
+                .stdin(Stdio::inherit());
+
+            if quiet_output {
+                fallback.stdout(Stdio::null()).stderr(Stdio::null());
+            } else {
+                fallback.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+            }
 
             for (k, v) in vars {
                 fallback.env(k, v);
@@ -142,7 +248,7 @@ fn spawn_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<std::process::C
 }
 
 fn run_orchestrator(vars: &[(&str, String)]) -> anyhow::Result<()> {
-    let mut child = spawn_orchestrator(vars)?;
+    let mut child = spawn_orchestrator(vars, false)?;
     let status = child.wait()?;
     if status.success() {
         Ok(())
@@ -180,13 +286,31 @@ fn main() -> anyhow::Result<()> {
         "ORCHESTRATOR_NETWORK_DESCRIPTION",
         "",
     );
-    let default_public_url = advertised_url(&bind_addr).unwrap_or_default();
     let orchestrator_public_url = prompt(
-        "ORCHESTRATOR_PUBLIC_URL (what users/providers should call)",
+        "ORCHESTRATOR_PUBLIC_URL (optional explicit public URL; leave blank for auto)",
         "ORCHESTRATOR_PUBLIC_URL",
-        &default_public_url,
+        "",
     );
-    let orchestrator_dashboard_url = orchestrator_public_url.clone();
+    let mut orchestrator_public_url_provider = prompt(
+        "ORCHESTRATOR_PUBLIC_URL_PROVIDER (cloudflare or none)",
+        "ORCHESTRATOR_PUBLIC_URL_PROVIDER",
+        "cloudflare",
+    );
+    let orchestrator_dashboard_url = local_dashboard_url(&bind_addr);
+
+    if orchestrator_public_url.trim().is_empty()
+        && orchestrator_public_url_provider.trim().eq_ignore_ascii_case("cloudflare")
+        && !command_exists("cloudflared")
+    {
+        if try_install_cloudflared()? {
+            println!("cloudflared installed successfully.");
+        } else {
+            println!(
+                "cloudflared is not available; falling back to ORCHESTRATOR_PUBLIC_URL_PROVIDER=none for this run."
+            );
+            orchestrator_public_url_provider = "none".to_string();
+        }
+    }
     let open_dashboard_after_start = prompt_yes_no(
         "Open live dashboard after startup",
         "OPEN_DASHBOARD_AFTER_START",
@@ -203,18 +327,20 @@ fn main() -> anyhow::Result<()> {
         ("ORCHESTRATOR_NETWORK_NAME", managed_network_name),
         ("ORCHESTRATOR_NETWORK_DESCRIPTION", managed_network_description),
         ("ORCHESTRATOR_PUBLIC_URL", orchestrator_public_url),
+        ("ORCHESTRATOR_PUBLIC_URL_PROVIDER", orchestrator_public_url_provider),
     ];
 
     println!();
     if let Some(url) = advertised_url(&bind_addr) {
         println!("Detected orchestrator URL to share: {}", url);
         println!("Health check after start: {}/health", url);
+        println!("Local dashboard URL: {}", orchestrator_dashboard_url);
         println!();
     }
     println!("Starting orchestrator...");
 
     if open_dashboard_after_start {
-        let mut child = spawn_orchestrator(&vars)?;
+        let mut child = spawn_orchestrator(&vars, true)?;
         let dashboard_result = tokio::runtime::Runtime::new()?
             .block_on(dashboard::run(orchestrator_dashboard_url))
             .map_err(anyhow::Error::from);

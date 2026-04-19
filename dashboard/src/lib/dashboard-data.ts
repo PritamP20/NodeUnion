@@ -40,12 +40,14 @@ export type NetworkNode = {
   ramUsageGb: number;
   lastHeartbeat: string;
   providerWallet: string;
+  agentUrl?: string;
 };
 
 export type NetworkCard = {
   networkId: string;
   name: string;
   summary: string;
+  orchestratorUrl?: string;
   onlineNodes: number;
   offlineNodes: number;
   activeJobs: number;
@@ -75,6 +77,8 @@ export type ProviderNode = {
   status: string;
   uptime: string;
   jobsCompleted: number;
+  agentUrl?: string;
+  orchestratorUrl?: string;
 };
 
 export type UserJob = {

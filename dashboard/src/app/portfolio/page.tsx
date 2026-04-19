@@ -192,6 +192,8 @@ export default function PortfolioPage() {
       status: mapNodeStatus(node.status),
       uptime: node.status === "Offline" ? "stale" : "live",
       jobsCompleted: snapshot.jobs.filter((job) => job.assigned_node_id === node.node_id && job.status === "Done").length,
+      agentUrl: node.agent_url || undefined,
+      orchestratorUrl: node.orchestrator_url || undefined,
     }));
   }, [snapshot.jobs, snapshot.nodes, snapshot.usingMock]);
 
@@ -427,6 +429,14 @@ export default function PortfolioPage() {
                     <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Region</p>
                     <p className="mt-2 font-semibold text-slate-100">{node.region}</p>
                   </div>
+                </div>
+                <div className="mt-3 space-y-2 text-xs text-slate-400">
+                  <p className="truncate" title={node.agentUrl || "unknown"}>
+                    public url: <span className="text-slate-300">{node.agentUrl || "unknown"}</span>
+                  </p>
+                  <p className="truncate" title={node.orchestratorUrl || "unknown"}>
+                    orchestrator: <span className="text-slate-300">{node.orchestratorUrl || "unknown"}</span>
+                  </p>
                 </div>
               </div>
             ))}

@@ -241,6 +241,16 @@ fn render_status_area(area: Rect, frame: &mut Frame<'_>, state: &AgentStateRespo
             Span::styled(state.node_id.clone(), Style::default().add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
+            Span::styled("public url ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                state
+                    .public_url
+                    .clone()
+                    .unwrap_or_else(|| "(not available yet)".to_string()),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]),
+        Line::from(vec![
             Span::styled("state ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 node_status_label(&state.status),

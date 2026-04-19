@@ -300,6 +300,16 @@ fn main() -> anyhow::Result<()> {
         "",
     );
     let bind_addr = choose_bind_addr("0.0.0.0:8090", "AGENT_BIND_ADDR");
+    let agent_public_url = prompt(
+        "AGENT_PUBLIC_URL (optional explicit public URL; leave blank for auto)",
+        "AGENT_PUBLIC_URL",
+        "",
+    );
+    let agent_public_url_provider = prompt(
+        "AGENT_PUBLIC_URL_PROVIDER (cloudflare or none)",
+        "AGENT_PUBLIC_URL_PROVIDER",
+        "cloudflare",
+    );
     let heartbeat_interval_secs = prompt("HEARTBEAT_INTERVAL_SECS", "HEARTBEAT_INTERVAL_SECS", "60");
     let metrics_poll_interval_secs = prompt("METRICS_POLL_INTERVAL_SECS", "METRICS_POLL_INTERVAL_SECS", "30");
     let idle_cpu_threshold_pct = prompt("IDLE_CPU_THRESHOLD_PCT", "IDLE_CPU_THRESHOLD_PCT", "15.0");
@@ -318,6 +328,8 @@ fn main() -> anyhow::Result<()> {
         ("NETWORK_ID", network_id),
         ("PROVIDER_WALLET", provider_wallet),
         ("AGENT_BIND_ADDR", bind_addr),
+        ("AGENT_PUBLIC_URL", agent_public_url),
+        ("AGENT_PUBLIC_URL_PROVIDER", agent_public_url_provider),
         ("ORCHESTRATOR_BASE_URL", orchestrator_base_url.clone()),
         ("HEARTBEAT_INTERVAL_SECS", heartbeat_interval_secs),
         ("METRICS_POLL_INTERVAL_SECS", metrics_poll_interval_secs),

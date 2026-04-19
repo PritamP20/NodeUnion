@@ -19,6 +19,10 @@ path = "src/bin/local_tui.rs"
 name = "nodeunion-agent-launch-tui"
 path = "src/bin/launch_tui.rs"
 
+[[bin]]
+name = "nodeunion-agent-quickstart"
+path = "src/bin/quickstart.rs"
+
 [dependencies]
 anyhow = "1"
 axum = "0.7"

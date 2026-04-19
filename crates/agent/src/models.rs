@@ -102,6 +102,7 @@ pub struct RunningChunkView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentStateResponse {
     pub node_id: String,
+    pub public_url: Option<String>,
     pub status: NodeStatus,
     pub is_idle: bool,
     pub running_chunks: usize,
