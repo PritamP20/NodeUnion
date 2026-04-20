@@ -27,10 +27,7 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   min-height: 100vh;
-  background-image:
-    radial-gradient(circle at 15% 20%, rgba(47, 129, 247, 0.18), transparent 36%),
-    radial-gradient(circle at 85% 10%, rgba(63, 185, 80, 0.14), transparent 32%),
-    linear-gradient(160deg, #0d1117 0%, #11161f 45%, #161b22 100%);
+  background-image: none;
 }
 
 .glass-card,
