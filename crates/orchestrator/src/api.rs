@@ -16,7 +16,8 @@ use tokio::time::{sleep, Duration};
 use crate::model::{
     ChunkStatusUpdate, CreateNetworkRequest, CreateNetworkResponse, HeartbeatPayload, JobRecord,
     JobStatus, NetworkRecord, NetworkStatus, NodeRecord, NodeStatus, RegisterNodeRequest,
-    RegisterNodeResponse, RunJobRequest, RunJobResponse, SubmitJobRequest, SubmitJobResponse,
+    RegisterNodeResponse, RunJobRequest, RunJobResponse, StopJobRequest, StopJobResponse,
+    SubmitJobRequest, SubmitJobResponse,
 };
 use crate::state::SharedState;
 
@@ -61,12 +62,123 @@ pub fn build_router(app: AppState) -> Router {
         .route("/nodes/register", post(register_node_handler))
         .route("/nodes", get(list_nodes_handler))
         .route("/jobs/submit", post(submit_job_handler))
+        .route("/jobs/:job_id/stop", post(stop_job_handler))
         .route("/jobs", get(list_jobs_handler))
     .route("/users/:wallet/entitlements", get(list_user_entitlements_handler))
     .route("/users/:wallet/settlements", get(list_user_settlements_handler))
         .route("/agent/heartbeat", post(agent_heartbeat_handler))
         .route("/agent/chunk-status", post(agent_chunk_status_handler))
         .with_state(app)
+}
+
+async fn stop_job_handler(
+    Path(job_id): Path<String>,
+    State(app): State<AppState>,
+    Json(payload): Json<StopJobRequest>,
+) -> Result<Json<StopJobResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let (job_snapshot, node_snapshot, chunk_id) = {
+        let guard = app.state.read().await;
+        let job = guard.jobs.get(&job_id).cloned().ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": format!("job '{}' not found", job_id)})),
+            )
+        })?;
+
+        let node = job
+            .assigned_node_id
+            .as_ref()
+            .and_then(|id| guard.nodes.get(id))
+            .cloned();
+        let chunk_id = guard.job_chunk_ids.get(&job_id).cloned();
+
+        (job, node, chunk_id)
+    };
+
+    if matches!(
+        job_snapshot.status,
+        JobStatus::Done | JobStatus::Failed | JobStatus::Stopped | JobStatus::Preempted
+    ) {
+        return Ok(Json(StopJobResponse {
+            stopped: false,
+            job_id,
+            status: job_snapshot.status,
+            message: "job is already in terminal state".to_string(),
+        }));
+    }
+
+    if let (Some(node), Some(chunk)) = (node_snapshot.clone(), chunk_id.clone()) {
+        let stop_url = format!("{}/stop", node.agent_url.trim_end_matches('/'));
+        let agent_resp = app
+            .http
+            .post(stop_url)
+            .json(&serde_json::json!({
+                "chunk_id": chunk,
+                "reason": payload.reason.clone(),
+            }))
+            .send()
+            .await;
+
+        match agent_resp {
+            Ok(resp) if resp.status().is_success() => {}
+            Ok(resp) => {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": format!("agent stop failed with status {}", resp.status())})),
+                ));
+            }
+            Err(err) => {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({"error": format!("agent stop request failed: {}", err)})),
+                ));
+            }
+        }
+    }
+
+    let stop_message = payload
+        .reason
+        .clone()
+        .unwrap_or_else(|| "stopped by user".to_string());
+
+    let (job_state, node_state) = {
+        let mut guard = app.state.write().await;
+
+        if let Some(job_mut) = guard.jobs.get_mut(&job_id) {
+            job_mut.status = JobStatus::Stopped;
+            job_mut.error_detail = Some(stop_message.clone());
+        }
+
+        let node_state = if let Some(node_id) = job_snapshot.assigned_node_id.as_ref() {
+            if let Some(node_mut) = guard.nodes.get_mut(node_id) {
+                node_mut.is_idle = true;
+                node_mut.status = NodeStatus::Idle;
+            }
+            guard.nodes.get(node_id).cloned()
+        } else {
+            None
+        };
+
+        guard.job_exposed_ports.remove(&job_id);
+        guard.job_deploy_urls.remove(&job_id);
+        guard.job_chunk_ids.remove(&job_id);
+
+        (guard.jobs.get(&job_id).cloned(), node_state)
+    };
+
+    if let Some(job) = &job_state {
+        let _ = persist_job_state(&app, job).await;
+    }
+    if let Some(node) = &node_state {
+        let _ = node_repo::register_node(&app.db, &node_record_to_row(node)).await;
+    }
+
+    Ok(Json(StopJobResponse {
+        stopped: true,
+        job_id,
+        status: JobStatus::Stopped,
+        message: stop_message,
+    }))
 }
 
 pub async fn run_pending_scheduler_loop(app: AppState, interval_secs: u64) {
@@ -624,7 +736,8 @@ async fn agent_chunk_status_handler(
             JobStatus::Done | JobStatus::Failed | JobStatus::Preempted | JobStatus::Stopped
         ) {
             guard.job_exposed_ports.remove(&payload.job_id);
-            // Keep deploy_urls so the ngrok link persists in the job record
+            // Keep deploy_urls so the discovered public link persists in the job record.
+            guard.job_chunk_ids.remove(&payload.job_id);
         }
 
         guard.jobs.get(&payload.job_id).cloned()
@@ -771,6 +884,9 @@ async fn dispatch_job_to_idle_node(app: &AppState, job_id: &str) -> Result<(), (
                             job_mut.deploy_url = Some(url.clone());
                         }
                     }
+                    guard
+                        .job_chunk_ids
+                        .insert(job_id.to_string(), run_payload.chunk_id.clone());
                     if let Some(url) = agent_resp.deploy_url {
                         guard.job_deploy_urls.insert(job_id.to_string(), url);
                     }
@@ -804,6 +920,7 @@ async fn dispatch_job_to_idle_node(app: &AppState, job_id: &str) -> Result<(), (
             job_mut.status = JobStatus::Pending;
             job_mut.assigned_node_id = None;
         }
+        guard.job_chunk_ids.remove(job_id);
 
         let node_snapshot = guard.nodes.get(&node.node_id).cloned();
         let job_snapshot = guard.jobs.get(job_id).cloned();

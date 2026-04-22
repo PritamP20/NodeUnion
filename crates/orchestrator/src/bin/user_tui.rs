@@ -4,7 +4,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::env;
-use nodeunion_orchestrator::model::{JobRecord, JobStatus, NetworkRecord, NodeRecord, SubmitJobRequest, SubmitJobResponse};
+use nodeunion_orchestrator::model::{
+    JobRecord, JobStatus, NetworkRecord, NodeRecord, StopJobRequest, StopJobResponse,
+    SubmitJobRequest, SubmitJobResponse,
+};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -254,6 +257,101 @@ enum SubmissionMessage {
     StatusUpdate(String),
     Success(DeployResult),
     Error(String),
+    StopSuccess(String),
+    StopError(String),
+}
+
+fn sorted_jobs(snapshot: &Snapshot) -> Vec<JobRecord> {
+    let mut jobs = snapshot.jobs.clone();
+    jobs.sort_by_key(|job| Reverse(job.created_at_epoch_secs));
+    jobs
+}
+
+fn selected_job_id(snapshot: &Snapshot, selected: usize) -> Option<String> {
+    let jobs = sorted_jobs(snapshot);
+    jobs.get(selected)
+        .or_else(|| jobs.first())
+        .map(|job| job.job_id.clone())
+}
+
+fn launch_stop_job(
+    snapshot: &Snapshot,
+    selected: usize,
+    client: &Client,
+    base_url: &str,
+    tx: &mpsc::Sender<SubmissionMessage>,
+) {
+    let Some(job_id) = selected_job_id(snapshot, selected) else {
+        return;
+    };
+
+    let client_clone = client.clone();
+    let base_url = base_url.trim_end_matches('/').to_string();
+    let tx_clone = tx.clone();
+
+    tokio::spawn(async move {
+        let _ = tx_clone
+            .send(SubmissionMessage::StatusUpdate(format!(
+                "Stopping job {} ...",
+                job_id
+            )))
+            .await;
+
+        let req = StopJobRequest {
+            reason: Some("stopped by user from TUI".to_string()),
+        };
+
+        let response = client_clone
+            .post(format!("{}/jobs/{}/stop", base_url, job_id))
+            .json(&req)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<StopJobResponse>().await {
+                    Ok(stop_resp) => {
+                        let _ = tx_clone
+                            .send(SubmissionMessage::StopSuccess(format!(
+                                "{} ({})",
+                                stop_resp.message, stop_resp.job_id
+                            )))
+                            .await;
+                    }
+                    Err(err) => {
+                        let _ = tx_clone
+                            .send(SubmissionMessage::StopError(format!(
+                                "stop succeeded but response decode failed: {}",
+                                err
+                            )))
+                            .await;
+                    }
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<unreadable response body>".to_string());
+                let _ = tx_clone
+                    .send(SubmissionMessage::StopError(format!(
+                        "stop failed ({}): {}",
+                        status,
+                        sanitize_for_tui(&body)
+                    )))
+                    .await;
+            }
+            Err(err) => {
+                let _ = tx_clone
+                    .send(SubmissionMessage::StopError(format!(
+                        "stop request failed: {}",
+                        err
+                    )))
+                    .await;
+            }
+        }
+    });
 }
 
 fn prompt(label: &str, default: &str) -> String {
@@ -366,18 +464,6 @@ fn node_age_secs(node: &NodeRecord, now: u64) -> u64 {
     now.saturating_sub(node.last_seen_epoch_secs)
 }
 
-fn service_url_from_agent_url(agent_url: &str, exposed_port: u16) -> Option<String> {
-    let without_scheme = agent_url.split_once("://").map(|(_, rest)| rest).unwrap_or(agent_url);
-    let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
-    let host = host_port.split(':').next().unwrap_or(host_port);
-
-    if host.is_empty() {
-        None
-    } else {
-        Some(format!("http://{}:{}", host, exposed_port))
-    }
-}
-
 fn sanitize_for_tui(input: &str) -> String {
     input
         .chars()
@@ -399,18 +485,48 @@ fn tail_lines(text: &str, max_lines: usize) -> String {
     lines.join("\n")
 }
 
-fn effective_job_url(job: &JobRecord, nodes: &[NodeRecord]) -> Option<String> {
+fn sync_last_result_with_snapshot(form: &mut DeployForm, snapshot: &Snapshot) {
+    let Some(last_result) = form.last_result.as_mut() else {
+        return;
+    };
+
+    if last_result.job_id == "-" {
+        return;
+    }
+
+    let Some(job) = snapshot.jobs.iter().find(|job| job.job_id == last_result.job_id) else {
+        return;
+    };
+
+    last_result.status = job.status.clone();
+    last_result.assigned_node_id = job.assigned_node_id.clone();
+    last_result.deploy_url = job.deploy_url.clone();
+    last_result.error_detail = job.error_detail.clone();
+    last_result.message = match job.status {
+        JobStatus::Pending => "job accepted, waiting for idle node".to_string(),
+        JobStatus::Scheduled | JobStatus::Running => "job dispatched to node".to_string(),
+        JobStatus::Done => "job completed".to_string(),
+        JobStatus::Stopped => "job stopped".to_string(),
+        JobStatus::Failed => "job failed".to_string(),
+        JobStatus::Preempted => "job preempted".to_string(),
+    };
+
+    if let Some(url) = &last_result.deploy_url {
+        form.status_message = format!("✓ Deployed: {}", url);
+    } else if matches!(job.status, JobStatus::Running | JobStatus::Scheduled) {
+        form.status_message = "Job is running; public URL is still pending from node tunnel setup.".to_string();
+    }
+}
+
+fn effective_job_url(job: &JobRecord, _nodes: &[NodeRecord]) -> Option<String> {
     if let Some(url) = &job.deploy_url {
         return Some(url.clone());
     }
 
-    let exposed_port = job.exposed_port?;
-    let node_id = job.assigned_node_id.as_ref()?;
-    let node = nodes.iter().find(|node| &node.node_id == node_id)?;
-    service_url_from_agent_url(&node.agent_url, exposed_port)
+    None
 }
 
-fn run_builder(command: &str, args: &[String]) -> anyhow::Result<()> {
+fn run_builder(command: &str, args: &[String], phase: &str) -> anyhow::Result<()> {
     let mut process = Command::new(command);
     process.args(args);
     let output = process.output()?;
@@ -421,9 +537,9 @@ fn run_builder(command: &str, args: &[String]) -> anyhow::Result<()> {
         let details = tail_lines(&sanitize_for_tui(&raw), 12);
 
         if details.trim().is_empty() {
-            anyhow::bail!("{} failed with status {}", command, output.status);
+            anyhow::bail!("{} failed during {} with status {}", command, phase, output.status);
         } else {
-            anyhow::bail!("{} failed with status {}:\n{}", command, output.status, details);
+            anyhow::bail!("{} failed during {} with status {}:\n{}", command, phase, output.status, details);
         }
     }
     Ok(())
@@ -446,6 +562,7 @@ async fn docker_build(dockerfile_path: &str, context_path: &str, image_tag: &str
                 image_tag,
                 context_path,
             ],
+            "build",
         )
     })
     .await
@@ -457,7 +574,7 @@ async fn docker_push(image_tag: &str) -> anyhow::Result<()> {
     let image_tag = image_tag.to_string();
     
     tokio::task::spawn_blocking(move || {
-        run_builder("docker", &["push".to_string(), image_tag])
+        run_builder("docker", &["push".to_string(), image_tag], "push")
     })
     .await
     .map_err(|e| anyhow::anyhow!("spawn_blocking error: {}", e))?
@@ -570,7 +687,7 @@ async fn submit_deploy_in_background(
     client: Client,
     snapshot: Snapshot,
     form_data: (String, usize, String, String, String, String, String, String, String, String, bool),
-    orchestrator_url: String,
+    _orchestrator_url: String,
     tx: mpsc::Sender<SubmissionMessage>,
 ) {
     let (orchestra_url, selected_network_idx, wallet, dockerfile, context, image_tag, command, cpu, ram, port, push) = form_data;
@@ -619,13 +736,39 @@ async fn submit_deploy_in_background(
 
         let default_context = Path::new(&dockerfile_abs)
             .parent()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
-        let context_path = if context.trim().is_empty() {
-            default_context
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let raw_context = if context.trim().is_empty() {
+            default_context.to_string_lossy().to_string()
         } else {
             context.trim().to_string()
         };
+
+        let context_path = if Path::new(&raw_context).is_absolute() {
+            raw_context
+        } else {
+            let cwd = std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string());
+            PathBuf::from(&cwd)
+                .join(&raw_context)
+                .to_string_lossy()
+                .to_string()
+        };
+
+        if context_path.trim() == "/" {
+            anyhow::bail!(
+                "Build context '/' is not allowed. Leave Context blank or set it to the Dockerfile folder."
+            );
+        }
+
+        let context_meta = std::fs::metadata(&context_path).map_err(|_| {
+            anyhow::anyhow!("Build context not found: {}", context_path)
+        })?;
+        if !context_meta.is_dir() {
+            anyhow::bail!("Build context must be a directory: {}", context_path);
+        }
 
         let cpu_limit = cpu.trim().parse::<f64>().unwrap_or(0.25);
         let ram_limit_mb = ram.trim().parse::<u64>().unwrap_or(128);
@@ -681,15 +824,7 @@ async fn submit_deploy_in_background(
 
         if deploy_url.is_none() && exposed_port.is_some() {
             let _ = tx.send(SubmissionMessage::StatusUpdate("Waiting for the public URL to appear ...".to_string())).await;
-            deploy_url = poll_deploy_url(&client, &orchestra_url, &submit_response.job_id, 30).await?;
-        }
-
-        if deploy_url.is_none() {
-            deploy_url = submit_response
-                .assigned_node_id
-                .as_ref()
-                .and_then(|node_id| snapshot.nodes.iter().find(|node| &node.node_id == node_id))
-                .and_then(|node| exposed_port.and_then(|p| service_url_from_agent_url(&node.agent_url, p)));
+            deploy_url = poll_deploy_url(&client, &orchestra_url, &submit_response.job_id, 120).await?;
         }
 
         Ok::<DeployResult, anyhow::Error>(DeployResult {
@@ -709,7 +844,14 @@ async fn submit_deploy_in_background(
             let _ = tx.send(SubmissionMessage::Success(deploy_result)).await;
         }
         Err(err) => {
-            let _ = tx.send(SubmissionMessage::Error(err.to_string())).await;
+            // Include full error chain for debugging
+            let mut error_msg = format!("{}", err);
+            let mut source = err.source();
+            while let Some(s) = source {
+                error_msg.push_str(&format!("\n  Caused by: {}", s));
+                source = s.source();
+            }
+            let _ = tx.send(SubmissionMessage::Error(error_msg)).await;
         }
     }
 }
@@ -903,9 +1045,7 @@ fn render_summary(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot) {
 }
 
 fn render_portfolio(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot, selected: usize) {
-    let rows_source = snapshot.jobs.clone();
-    let mut jobs = rows_source;
-    jobs.sort_by_key(|job| Reverse(job.created_at_epoch_secs));
+    let jobs = sorted_jobs(snapshot);
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1052,7 +1192,7 @@ fn render_portfolio(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot, sele
     };
 
     let details_widget = Paragraph::new(details)
-        .block(Block::default().borders(Borders::ALL).title("Selected Job"))
+        .block(Block::default().borders(Borders::ALL).title("Selected Job (x: stop)"))
         .wrap(Wrap { trim: true });
 
     frame.render_widget(details_widget, summary_area[2]);
@@ -1107,7 +1247,7 @@ fn render_deploy(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot, form: &
             Style::default().fg(Color::DarkGray),
         )]),
         Line::from(vec![Span::styled(
-            "Tip: use Tab/Shift+Tab to move, Left/Right for network and toggle fields, Enter on Submit.",
+            "Tip: Portfolio tab uses x to stop selected job. Deploy tab uses Tab/Shift+Tab, Left/Right, Enter on Submit.",
             Style::default().fg(Color::DarkGray),
         )]),
     ]))
@@ -1465,6 +1605,9 @@ async fn handle_key(
                 }
                 KeyCode::Home => *portfolio_selected = 0,
                 KeyCode::End => *portfolio_selected = job_count - 1,
+                KeyCode::Char('x') => {
+                    launch_stop_job(snapshot, *portfolio_selected, client, base_url, &submission_tx);
+                }
                 _ => {}
             }
         }
@@ -1593,6 +1736,8 @@ pub async fn run(base_url: String) -> anyhow::Result<()> {
             form.selected_network = 0;
         }
 
+        sync_last_result_with_snapshot(&mut form, &snapshot);
+
         terminal.draw(|frame| {
             render_app(
                 frame,
@@ -1693,6 +1838,13 @@ pub async fn run(base_url: String) -> anyhow::Result<()> {
                                 message: err.clone(),
                                 error_detail: Some(err),
                             });
+                        }
+                        SubmissionMessage::StopSuccess(msg) => {
+                            form.status_message = format!("✓ Job stopped: {}", msg);
+                            snapshot = refresh_snapshot(&client, &orchestrator_url).await;
+                        }
+                        SubmissionMessage::StopError(err) => {
+                            form.status_message = format!("✗ Stop failed: {}", err);
                         }
                     }
                 }

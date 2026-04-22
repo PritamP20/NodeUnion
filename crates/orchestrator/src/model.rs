@@ -103,6 +103,19 @@ pub struct SubmitJobResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopJobRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopJobResponse {
+    pub stopped: bool,
+    pub job_id: String,
+    pub status: JobStatus,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunJobRequest {
     pub job_id: String, // Parent job ID this chunk belongs to.
     pub chunk_id: String, // Unique chunk ID to run on the agent.
