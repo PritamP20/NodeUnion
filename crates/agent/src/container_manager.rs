@@ -44,16 +44,10 @@ async fn ensure_image_available(docker: &Docker, image: &str) -> Result<()> {
     }
 }
 
-/// Run a container with the specified configuration.
-/// If port_bindings is provided, maps container ports to host ports.
-/// Format for port_bindings: "8080/tcp" -> 8000 (container port -> host port)
 pub async fn run_container(docker: &Docker, req: &RunJobRequest) -> Result<DeploymentResult> {
     run_container_with_ports(docker, req, None).await
 }
 
-/// Run a container with custom port bindings for testing and development.
-/// port_bindings: HashMap<"port/protocol", host_port>
-/// Example: ("8080/tcp", 8000) maps container:8080 -> host:8000
 pub async fn run_container_with_ports(
     docker: &Docker,
     req: &RunJobRequest,
@@ -78,7 +72,6 @@ pub async fn run_container_with_ports(
                 public_probe_port = Some(host_port);
             }
             
-            // Add to port bindings - format: "8080/tcp" -> [PortBinding { host_ip: "127.0.0.1", host_port: "8000" }]
             let binding = vec![PortBinding {
                 host_ip: Some("127.0.0.1".to_string()),
                 host_port: Some(host_port.to_string()),

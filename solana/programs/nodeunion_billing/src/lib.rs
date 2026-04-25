@@ -21,7 +21,6 @@ pub mod nodeunion_billing {
         Ok(())
     }
 
-    // Register a network on-chain
     pub fn register_network(
         ctx: Context<RegisterNetwork>,
         network_id: String,

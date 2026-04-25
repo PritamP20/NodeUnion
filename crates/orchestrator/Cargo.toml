@@ -23,6 +23,10 @@ path = "src/bin/launch_tui.rs"
 name = "nodeunion-orchestrator-user-tui"
 path = "src/bin/user_tui.rs"
 
+[[bin]]
+name = "nodeunion-orchestrator-db-migrate"
+path = "src/bin/db_migrate.rs"
+
 [dependencies]
 anyhow = "1"
 axum = "0.7"

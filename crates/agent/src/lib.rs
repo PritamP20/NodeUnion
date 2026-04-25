@@ -1,6 +1,3 @@
-// Public library API for the agent daemon.
-// This allows integration tests and external consumers to use agent components.
-
 pub mod api;
 pub mod app_state;
 pub mod config;
