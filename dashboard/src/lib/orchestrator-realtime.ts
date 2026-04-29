@@ -29,8 +29,10 @@ export type OrchestratorJob = {
   network_id: string;
   user_wallet?: string | null;
   image: string;
+  command?: string[] | null;
   cpu_limit: number;
   ram_limit_mb: number;
+  exposed_port?: number | null;
   status: "Pending" | "Scheduled" | "Running" | "Done" | "Failed" | "Preempted" | "Stopped";
   assigned_node_id?: string | null;
   created_at_epoch_secs: number;
@@ -101,6 +103,39 @@ export async function fetchNodes() {
 
 export async function fetchJobs() {
   return fetchJson<OrchestratorJob[]>("/jobs");
+}
+
+export async function fetchJobById(jobId: string) {
+  return fetchJson<OrchestratorJob>(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function fetchJobLogs(jobId: string) {
+  const response = await fetch(`${ORCHESTRATOR_PROXY_BASE}/jobs/${encodeURIComponent(jobId)}/logs`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `request failed with ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const payload = (await response.json()) as { lines?: string[]; logs?: string[]; data?: string | string[]; message?: string };
+    if (Array.isArray(payload.lines)) return payload.lines;
+    if (Array.isArray(payload.logs)) return payload.logs;
+    if (Array.isArray(payload.data)) return payload.data.map((value) => String(value));
+    if (typeof payload.data === "string") return payload.data.split("\n").filter(Boolean);
+    if (typeof payload.message === "string") return payload.message.split("\n").filter(Boolean);
+    return [];
+  }
+
+  const raw = await response.text();
+  return raw
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
 }
 
 export async function fetchWalletEntitlements(wallet: string) {
