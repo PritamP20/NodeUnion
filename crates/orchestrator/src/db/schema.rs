@@ -82,3 +82,16 @@ pub struct SettlementRow {
     pub settlement_type: Option<String>,
     pub created_at_epoch_secs: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ProviderSettlementRow {
+    pub provider_settlement_id: String,
+    pub job_id: String,
+    pub provider_wallet: String,
+    pub network_id: String,
+    pub units_earned: i64,
+    pub amount_tokens: i64,
+    pub tx_hash: Option<String>,
+    pub tx_status: Option<String>,
+    pub created_at_epoch_secs: i64,
+}

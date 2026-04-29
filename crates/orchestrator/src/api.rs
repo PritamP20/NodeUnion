@@ -6,7 +6,7 @@ use axum::{
 };
 use crate::db::{
     entitlements_repo, jobs_repo, networks_repo, node_repo, settlements_repo,
-    schema::{JobRow, NetworkRow, NodeRow, SettlementRow, UserEntitlementRow}, DbPool
+    schema::{JobRow, NetworkRow, NodeRow, ProviderSettlementRow, SettlementRow, UserEntitlementRow}, DbPool
 };
 use reqwest::Client;
 use std::collections::HashMap;
@@ -66,6 +66,7 @@ pub fn build_router(app: AppState) -> Router {
         .route("/jobs", get(list_jobs_handler))
     .route("/users/:wallet/entitlements", get(list_user_entitlements_handler))
     .route("/users/:wallet/settlements", get(list_user_settlements_handler))
+    .route("/providers/:wallet/settlements", get(list_provider_settlements_handler))
         .route("/agent/heartbeat", post(agent_heartbeat_handler))
         .route("/agent/chunk-status", post(agent_chunk_status_handler))
         .with_state(app)
@@ -334,9 +335,12 @@ async fn create_network_handler(
         created_at_epoch_secs: now as u64,
     };
 
+    // Default price to 100 if not specified
+    let price_per_unit = payload.price_per_unit.unwrap_or(100);
+
     let chain_message = match app
         .solana
-        .register_network_on_chain(&payload.network_id, &payload.name)
+        .register_network_on_chain(&payload.network_id, &payload.name, price_per_unit)
         .await
     {
         Ok(tx_hash) => format!("network created on-chain: {tx_hash}"),
@@ -408,6 +412,10 @@ async fn register_node_handler(
         return Err(err);
     }
 
+    let register_network_id = payload.network_id.clone();
+    let register_node_id = payload.node_id.clone();
+    let register_provider_wallet = payload.provider_wallet.clone();
+
     let network_exists = networks_repo::get_network(&app.db, &payload.network_id)
         .await
         .map_err(|e| {
@@ -425,26 +433,11 @@ async fn register_node_handler(
         ));
     }
 
-    // Register provider on-chain if wallet is provided
-    let mut chain_message = "node registered".to_string();
-    if let Some(provider_wallet) = &payload.provider_wallet {
-        let provider_tx = app.solana
-            .register_provider_on_chain(&payload.network_id, &payload.node_id, provider_wallet)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": format!("solana register provider failed: {e}")})),
-                )
-            })?;
-        chain_message = format!("node registered on-chain: {}", provider_tx);
-    }
-
     let now = now_epoch_secs() as i64;
     let mut guard = app.state.write().await;
 
     let node = NodeRecord {
-        node_id: payload.node_id.clone(),
+        node_id: payload.node_id,
         network_id: payload.network_id,
         agent_url: payload.agent_url,
         provider_wallet: payload.provider_wallet,
@@ -459,7 +452,7 @@ async fn register_node_handler(
         last_seen_epoch_secs: now as u64,
     };
 
-    guard.nodes.insert(payload.node_id, node.clone());
+    guard.nodes.insert(register_node_id.clone(), node.clone());
 
     node_repo::register_node(&app.db, &node_record_to_row(&node)).await.map_err(|e| {
         (
@@ -467,6 +460,27 @@ async fn register_node_handler(
             Json(serde_json::json!({"error": format!("db register node failed: {e}")})),
         )
     })?;
+
+    // Best-effort on-chain registration should not block the agent from coming online.
+    let mut chain_message = "node registered".to_string();
+    if let Some(provider_wallet) = register_provider_wallet.as_deref() {
+        match app
+            .solana
+            .register_provider_on_chain(&register_network_id, &register_node_id, provider_wallet)
+            .await
+        {
+            Ok(provider_tx) => {
+                chain_message = format!("node registered on-chain: {}", provider_tx);
+            }
+            Err(err) => {
+                chain_message = format!(
+                    "node registered, but on-chain provider registration failed: {}",
+                    err
+                );
+                eprintln!("[WARN] {}", chain_message);
+            }
+        }
+    }
 
     Ok(Json(RegisterNodeResponse {
         registered: true,
@@ -671,6 +685,22 @@ async fn list_user_settlements_handler(
     Ok(Json(rows))
 }
 
+async fn list_provider_settlements_handler(
+    Path(wallet): Path<String>,
+    State(app): State<AppState>,
+) -> Result<Json<Vec<ProviderSettlementRow>>, (StatusCode, Json<serde_json::Value>)> {
+    let rows = settlements_repo::list_provider_settlements(&app.db, &wallet)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("db list provider settlements failed: {e}")})),
+            )
+        })?;
+
+    Ok(Json(rows))
+}
+
 async fn agent_heartbeat_handler(
     State(app): State<AppState>,
     Json(payload): Json<HeartbeatPayload>,
@@ -723,28 +753,137 @@ async fn agent_chunk_status_handler(
     State(app): State<AppState>,
     Json(payload): Json<ChunkStatusUpdate>,
 ) -> StatusCode {
-    let updated_job = {
+    let is_terminal = matches!(
+        payload.status,
+        JobStatus::Done | JobStatus::Failed | JobStatus::Preempted | JobStatus::Stopped
+    );
+
+    let (updated_job, should_settle_once) = {
         let mut guard = app.state.write().await;
+        let mut previous_status: Option<JobStatus> = None;
 
         if let Some(job) = guard.jobs.get_mut(&payload.job_id) {
+            previous_status = Some(job.status.clone());
             job.status = payload.status.clone();
             job.error_detail = payload.detail.clone();
         }
 
-        if matches!(
-            payload.status,
-            JobStatus::Done | JobStatus::Failed | JobStatus::Preempted | JobStatus::Stopped
-        ) {
+        if is_terminal {
             guard.job_exposed_ports.remove(&payload.job_id);
             // Keep deploy_urls so the discovered public link persists in the job record.
             guard.job_chunk_ids.remove(&payload.job_id);
         }
 
-        guard.jobs.get(&payload.job_id).cloned()
+        let was_terminal = matches!(
+            previous_status,
+            Some(JobStatus::Done | JobStatus::Failed | JobStatus::Preempted | JobStatus::Stopped)
+        );
+
+        (
+            guard.jobs.get(&payload.job_id).cloned(),
+            is_terminal && !was_terminal,
+        )
     };
 
-    if let Some(job) = updated_job {
+    if let Some(job) = updated_job.clone() {
         let _ = jobs_repo::update_job(&app.db, &job_record_to_row(&job)).await;
+
+        // On first terminal transition, settle usage then close escrow.
+        if should_settle_once {
+            let units_for_chain = (((job.cpu_limit.max(0.0) * 10000.0) as u64)
+                .saturating_add(job.ram_limit_mb / 100))
+            .max(1);
+
+            if let Err(err) = app
+                .solana
+                .record_usage_on_chain(&payload.job_id, units_for_chain)
+                .await
+            {
+                eprintln!(
+                    "[SOLANA] Failed to record usage for job {}: {}",
+                    payload.job_id, err
+                );
+            }
+
+            if let Ok(tx_sig) = app.solana.close_escrow_on_chain(&payload.job_id).await {
+                println!("[SOLANA] Closed escrow for job {}: {}", payload.job_id, tx_sig);
+
+                // Fetch the network's actual price per unit from on-chain
+                let price_per_unit = app
+                    .solana
+                    .get_network_price_per_unit(&job.network_id)
+                    .await
+                    .unwrap_or(100); // Default to 100 if fetch fails
+
+                // Record settlement with the transaction signature
+                let units_metered = ((job.cpu_limit * 10000.0) as i64) + (job.ram_limit_mb as i64 / 100);
+                let amount_tokens = units_metered * (price_per_unit as i64);
+                
+                let settlement_type = match payload.status {
+                    JobStatus::Done => "completed",
+                    JobStatus::Failed => "failed",
+                    JobStatus::Stopped => "stopped",
+                    JobStatus::Preempted => "preempted",
+                    _ => "unknown",
+                };
+
+                // Get provider wallet from the assigned node
+                let provider_wallet = if let Some(node_id) = &job.assigned_node_id {
+                    node_repo::get_node(&app.db, node_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|node| node.provider_wallet)
+                } else {
+                    None
+                };
+
+                if let Ok(()) = settlements_repo::create_settlement(
+                    &app.db,
+                    &payload.job_id,
+                    &job.user_wallet.clone().unwrap_or_else(|| "unknown".to_string()),
+                    provider_wallet.clone(),
+                    &job.network_id,
+                    units_metered,
+                    amount_tokens,
+                    settlement_type,
+                )
+                .await
+                {
+                    // Update settlement with the on-chain tx signature
+                    let settlement_id_result = settlements_repo::list_job_settlements(&app.db, &payload.job_id)
+                        .await
+                        .ok()
+                        .and_then(|settlements| settlements.into_iter().next())
+                        .map(|s| s.settlement_id);
+
+                    if let Some(settlement_id) = settlement_id_result {
+                        let _ = settlements_repo::update_settlement_tx(
+                            &app.db,
+                            &settlement_id,
+                            &tx_sig,
+                            "confirmed",
+                        )
+                        .await;
+                    }
+
+                    // Create provider settlement record if provider wallet is available
+                    if let Some(provider_walet) = provider_wallet {
+                        let _ = settlements_repo::create_provider_settlement(
+                            &app.db,
+                            &payload.job_id,
+                            &provider_walet,
+                            &job.network_id,
+                            units_metered,
+                            amount_tokens,
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                eprintln!("[SOLANA] Failed to close escrow for job {}", payload.job_id);
+            }
+        }
     }
 
     StatusCode::OK

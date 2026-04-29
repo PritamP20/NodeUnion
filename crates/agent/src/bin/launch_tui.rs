@@ -1,7 +1,9 @@
 use std::env;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -10,6 +12,8 @@ struct NetworkOption {
     network_id: String,
     name: String,
     status: String,
+    #[serde(default)]
+    price_per_unit: Option<u64>,
 }
 
 fn prompt(label: &str, env_key: &str, default: &str) -> String {
@@ -100,7 +104,7 @@ fn is_bind_available(bind_addr: &str) -> bool {
 }
 
 fn choose_bind_addr(default_addr: &str, env_key: &str) -> String {
-    let current = env::var(env_key).unwrap_or_else(|_| default_addr.to_string());
+    let mut current = env::var(env_key).unwrap_or_else(|_| default_addr.to_string());
 
     loop {
         let candidate = prompt("AGENT_BIND_ADDR", env_key, &current);
@@ -115,6 +119,8 @@ fn choose_bind_addr(default_addr: &str, env_key: &str) -> String {
             let auto_candidate = format!("0.0.0.0:{}", port);
             if is_bind_available(&auto_candidate) {
                 println!("Suggested free bind address: {}", auto_candidate);
+                // Make the next Enter accept the suggested free port.
+                current = auto_candidate;
                 break;
             }
         }
@@ -129,6 +135,34 @@ fn local_agent_url(bind_addr: &str) -> String {
     format!("http://127.0.0.1:{}", port)
 }
 
+fn wait_for_agent_ready(agent_url: &str, child: &mut std::process::Child) -> anyhow::Result<()> {
+    let host_port = agent_url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/');
+
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait()? {
+            return Err(anyhow::anyhow!(
+                "nodeunion-agent exited before becoming ready (status {})",
+                status
+            ));
+        }
+
+        if TcpStream::connect(host_port).is_ok() {
+            return Ok(());
+        }
+
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    Err(anyhow::anyhow!(
+        "timed out waiting for nodeunion-agent to listen at {}",
+        agent_url
+    ))
+}
+
 fn prompt_network_choice(networks: &[NetworkOption], env_key: &str) -> String {
     let current = env::var(env_key).unwrap_or_default();
 
@@ -136,12 +170,17 @@ fn prompt_network_choice(networks: &[NetworkOption], env_key: &str) -> String {
         println!();
         println!("Available networks from orchestrator:");
         for (index, network) in networks.iter().enumerate() {
+            let price_display = match network.price_per_unit {
+                Some(price) => format!(" | {} tokens/unit", price),
+                None => String::new(),
+            };
             println!(
-                "  [{}] {} - {} ({})",
+                "  [{}] {} - {} ({}){}",
                 index + 1,
                 network.network_id,
                 network.name,
                 network.status,
+                price_display,
             );
         }
 
@@ -239,12 +278,13 @@ fn run_agent(vars: &[(&str, String)]) -> anyhow::Result<()> {
     }
 }
 
-fn run_agent_local_tui(orchestrator_base_url: &str) -> anyhow::Result<()> {
+fn run_agent_local_tui(agent_url: &str, orchestrator_base_url: &str) -> anyhow::Result<()> {
     let mut cmd = Command::new("nodeunion-agent-local-tui");
     cmd.stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .env("AGENT_URL", orchestrator_base_url)
+        .env("AGENT_URL", agent_url)
+        .env("ORCHESTRATOR_URL", orchestrator_base_url)
         .env("AGENT_TUI_SKIP_PROMPT", "1");
 
     match cmd.status() {
@@ -261,7 +301,8 @@ fn run_agent_local_tui(orchestrator_base_url: &str) -> anyhow::Result<()> {
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
-                .env("AGENT_URL", orchestrator_base_url)
+                .env("AGENT_URL", agent_url)
+                .env("ORCHESTRATOR_URL", orchestrator_base_url)
                 .env("AGENT_TUI_SKIP_PROMPT", "1");
 
             let status = fallback.status()?;
@@ -344,7 +385,8 @@ fn main() -> anyhow::Result<()> {
 
     if open_dashboard_after_start {
         let mut child = spawn_agent(&vars)?;
-        let dashboard_result = run_agent_local_tui(&dashboard_agent_url);
+        wait_for_agent_ready(&dashboard_agent_url, &mut child)?;
+        let dashboard_result = run_agent_local_tui(&dashboard_agent_url, &orchestrator_base_url);
         let _ = child.kill();
         let _ = child.wait();
         dashboard_result

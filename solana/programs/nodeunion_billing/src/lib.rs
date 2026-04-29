@@ -25,14 +25,17 @@ pub mod nodeunion_billing {
         ctx: Context<RegisterNetwork>,
         network_id: String,
         name: String,
+        price_per_unit: u64,
     ) -> Result<()> {
         require!(!network_id.is_empty(), BillingError::InvalidNetworkId);
         require!(network_id.len() <= NetworkRegistry::MAX_NETWORK_ID_LEN, BillingError::InvalidNetworkId);
         require!(!name.is_empty(), BillingError::InvalidName);
+        require!(price_per_unit > 0, BillingError::InvalidPrice);
 
         let registry = &mut ctx.accounts.registry;
         registry.network_id = network_id.clone();
         registry.name = name;
+        registry.price_per_unit = price_per_unit;
         registry.authority = ctx.accounts.authority.key();
         registry.created_at = Clock::get()?.unix_timestamp;
         registry.bump = ctx.bumps.registry;
@@ -415,6 +418,7 @@ pub struct NetworkRegistry {
     pub network_id: String,
     #[max_len(64)]
     pub name: String,
+    pub price_per_unit: u64,
     pub authority: Pubkey,
     pub created_at: i64,
     pub bump: u8,
@@ -525,6 +529,8 @@ pub enum BillingError {
     InvalidAmount,
     #[msg("Invalid name")]
     InvalidName,
+    #[msg("Invalid price per unit")]
+    InvalidPrice,
     #[msg("Invalid units")]
     InvalidUnits,
     #[msg("Usage exceeds max limit")]

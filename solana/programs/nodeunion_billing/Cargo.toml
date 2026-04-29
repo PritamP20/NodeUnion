@@ -18,4 +18,5 @@ default = []
 [dependencies]
 anchor-lang = "0.30.1"
 anchor-spl = "0.30.1"
+proc-macro2 = { version = "1.0.106", features = ["span-locations"] }
 

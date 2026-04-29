@@ -393,3 +393,16 @@ Solana transaction failures:
 ---
 
 *Built with Rust. Runs on machines that would otherwise be doing nothing.*
+
+pritamp20@Pritams-MacBook-Air solana %  solana balance --url https://api.devnet.solana.com && anchor deploy --provider.cluster devnet 2>&1 | tail -120
+5.78439508 SOL
+Deploying cluster: https://api.devnet.solana.com
+Upgrade authority: /Users/pritamp20/.config/solana/id.json
+Deploying program "nodeunion_billing"...
+Program path: /Users/pritamp20/Documents/NodeUnion/solana/target/deploy/nodeunion_billing.so...
+Program Id: zEmSJV8TWmSwHX2f6RdyFvZgvCwQaJ9ZrLfdQtidexo
+
+Signature: 4anJjiqCuKQvnR1UWvZrtWxguhA8Qyqhxvm727rnCZJ13gg1sUsZgkbuKEW6K3jSXsbgBkFkuttC97D9UiUqGoCW
+
+Deploy success
+pritamp20@Pritams-MacBook-Air solana % 

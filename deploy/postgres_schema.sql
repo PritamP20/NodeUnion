@@ -108,6 +108,21 @@ CREATE TABLE IF NOT EXISTS settlements (
     FOREIGN KEY (network_id) REFERENCES networks(network_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS provider_settlements (
+    provider_settlement_id VARCHAR(255) PRIMARY KEY,
+    job_id VARCHAR(255) NOT NULL,
+    provider_wallet VARCHAR(255) NOT NULL,
+    network_id VARCHAR(255) NOT NULL,
+    units_earned BIGINT NOT NULL,
+    amount_tokens BIGINT NOT NULL,
+    tx_hash VARCHAR(255),
+    tx_status VARCHAR(50),
+    created_at_epoch_secs BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE,
+    FOREIGN KEY (network_id) REFERENCES networks(network_id) ON DELETE CASCADE
+);
+
 INSERT INTO networks (network_id, name, description, created_at_epoch_secs)
 VALUES ('default', 'Default Network', 'Auto-created fallback network', EXTRACT(EPOCH FROM NOW())::BIGINT)
 ON CONFLICT (network_id) DO NOTHING;

@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
     db::init_schema(&pool).await?;
 
     let rows: Vec<(String,)> = sqlx::query_as(
-        "select table_name from information_schema.tables where table_schema='public' and table_name in ('networks','nodes','jobs','attempts','user_entitlements','settlements') order by table_name",
+        "select table_name from information_schema.tables where table_schema='public' and table_name in ('networks','nodes','jobs','attempts','user_entitlements','settlements','provider_settlements') order by table_name",
     )
     .fetch_all(&pool)
     .await?;

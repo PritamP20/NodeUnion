@@ -27,6 +27,7 @@ pub struct SolanaClient {
 struct RegisterNetworkArgs {
     network_id: String,
     name: String,
+    price_per_unit: u64,
 }
 
 #[derive(BorshSerialize)]
@@ -107,6 +108,82 @@ impl SolanaClient {
             .map_err(|e| anyhow!("Invalid SPL token program id: {}", e))
     }
 
+    pub async fn get_network_price_per_unit(&self, network_id: &str) -> Result<u64> {
+        let program_id = self.program_pubkey()?;
+        let (registry_pubkey, _) = Pubkey::find_program_address(
+            &[b"network", network_id.as_bytes()],
+            &program_id,
+        );
+
+        // Fetch the account data from the RPC
+        let account = self
+            .rpc_client
+            .get_account(&registry_pubkey)
+            .await
+            .map_err(|e| anyhow!("Failed to fetch network registry account: {}", e))?;
+
+        // Parse the account data
+        // Format: 8 bytes discriminator + borsh-encoded NetworkRegistry
+        if account.data.len() < 8 {
+            return Err(anyhow!("Invalid network registry account data size"));
+        }
+
+        // Skip 8-byte Anchor discriminator
+        let data = &account.data[8..];
+
+        // Manually deserialize to extract price_per_unit (it's a u64)
+        // NetworkRegistry structure (in order):
+        // - network_id: String (4 bytes len + data)
+        // - name: String (4 bytes len + data)
+        // - price_per_unit: u64 (8 bytes)
+        // - authority: Pubkey (32 bytes)
+        // - created_at: i64 (8 bytes)
+        // - bump: u8 (1 byte)
+
+        let mut offset = 0;
+
+        // Skip network_id string
+        if data.len() < offset + 4 {
+            return Err(anyhow!("Invalid network registry data"));
+        }
+        let id_len = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
+        offset += 4 + id_len;
+
+        // Skip name string
+        if data.len() < offset + 4 {
+            return Err(anyhow!("Invalid network registry data"));
+        }
+        let name_len = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
+        offset += 4 + name_len;
+
+        // Read price_per_unit
+        if data.len() < offset + 8 {
+            return Err(anyhow!("Invalid network registry data"));
+        }
+        let price_per_unit = u64::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
+        ]);
+
+        Ok(price_per_unit)
+    }
+
     fn anchor_discriminator(name: &str) -> [u8; 8] {
         let preimage = format!("global:{}", name);
         let digest = Sha256::digest(preimage.as_bytes());
@@ -142,8 +219,9 @@ impl SolanaClient {
         &self,
         network_id: &str,
         name: &str,
+        price_per_unit: u64,
     ) -> Result<String> {
-        println!("[SOLANA] Registering network {} on devnet", network_id);
+        println!("[SOLANA] Registering network {} with price {} per unit on devnet", network_id, price_per_unit);
 
         let program_id = self.program_pubkey()?;
         let payer = self.load_keypair()?;
@@ -154,6 +232,7 @@ impl SolanaClient {
             &RegisterNetworkArgs {
                 network_id: network_id.to_string(),
                 name: name.to_string(),
+                price_per_unit,
             },
         )?;
 
@@ -296,19 +375,108 @@ impl SolanaClient {
         job_id: &str,
         units: u64,
     ) -> Result<String> {
-        let _ = job_id;
-        let _ = units;
-        let _args = RecordUsageArgs { units };
-        Err(anyhow!("record_usage_on_chain is not fully wired yet: provider token account lookup is required"))
+        println!("[SOLANA] Recording usage for job {} ({} units)", job_id, units);
+
+        let program_id = self.program_pubkey()?;
+        let payer = self.load_keypair()?;
+        let token_program = Self::token_program_pubkey()?;
+
+        // Derive escrow PDA
+        let (escrow, _) = Pubkey::find_program_address(&[b"escrow", job_id.as_bytes()], &program_id);
+        
+        // Derive config PDA
+        let (config, _) = Pubkey::find_program_address(&[b"config"], &program_id);
+
+        // Get token account addresses from environment
+        let escrow_token_account = self.parse_pubkey(
+            &env::var("SOLANA_ESCROW_TOKEN_ACCOUNT").map_err(|_| {
+                anyhow!(
+                    "SOLANA_ESCROW_TOKEN_ACCOUNT is required for record_usage_on_chain"
+                )
+            })?,
+            "escrow token account",
+        )?;
+
+        let provider_token_account = self.parse_pubkey(
+            &env::var("SOLANA_PROVIDER_TOKEN_ACCOUNT").map_err(|_| {
+                anyhow!(
+                    "SOLANA_PROVIDER_TOKEN_ACCOUNT is required for record_usage_on_chain"
+                )
+            })?,
+            "provider token account",
+        )?;
+
+        let data = Self::anchor_ix_data("record_usage", &RecordUsageArgs { units })?;
+
+        let ix = Instruction {
+            program_id,
+            accounts: vec![
+                AccountMeta::new(payer.pubkey(), true),
+                AccountMeta::new(escrow, false),
+                AccountMeta::new(escrow_token_account, false),
+                AccountMeta::new(provider_token_account, false),
+                AccountMeta::new_readonly(config, false),
+                AccountMeta::new_readonly(token_program, false),
+            ],
+            data,
+        };
+
+        let sig = self.submit_transaction(vec![ix]).await?;
+        Ok(sig.to_string())
     }
 
     pub async fn close_escrow_on_chain(
         &self,
         job_id: &str,
     ) -> Result<String> {
-        let _ = job_id;
-        let _args = CloseEscrowArgs {};
-        Err(anyhow!("close_escrow_on_chain is not fully wired yet: escrow/user token accounts must be resolved"))
+        println!("[SOLANA] Closing escrow for job {}", job_id);
+
+        let program_id = self.program_pubkey()?;
+        let payer = self.load_keypair()?;
+        let token_program = Self::token_program_pubkey()?;
+
+        // Derive escrow PDA
+        let (escrow, _) = Pubkey::find_program_address(&[b"escrow", job_id.as_bytes()], &program_id);
+        
+        // Derive config PDA
+        let (config, _) = Pubkey::find_program_address(&[b"config"], &program_id);
+
+        // Get token account addresses from environment
+        let escrow_token_account = self.parse_pubkey(
+            &env::var("SOLANA_ESCROW_TOKEN_ACCOUNT").map_err(|_| {
+                anyhow!(
+                    "SOLANA_ESCROW_TOKEN_ACCOUNT is required for close_escrow_on_chain"
+                )
+            })?,
+            "escrow token account",
+        )?;
+
+        let user_token_account = self.parse_pubkey(
+            &env::var("SOLANA_USER_TOKEN_ACCOUNT").map_err(|_| {
+                anyhow!(
+                    "SOLANA_USER_TOKEN_ACCOUNT is required for close_escrow_on_chain"
+                )
+            })?,
+            "user token account",
+        )?;
+
+        let data = Self::anchor_ix_data("close_escrow", &CloseEscrowArgs {})?;
+
+        let ix = Instruction {
+            program_id,
+            accounts: vec![
+                AccountMeta::new(payer.pubkey(), true),  // authority
+                AccountMeta::new(escrow, false),
+                AccountMeta::new(escrow_token_account, false),
+                AccountMeta::new(user_token_account, false),
+                AccountMeta::new_readonly(config, false),
+                AccountMeta::new_readonly(token_program, false),
+            ],
+            data,
+        };
+
+        let sig = self.submit_transaction(vec![ix]).await?;
+        Ok(sig.to_string())
     }
 }
 

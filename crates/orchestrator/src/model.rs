@@ -74,6 +74,7 @@ pub struct CreateNetworkRequest {
     pub network_id: String, // Unique network identifier (e.g., clg-a).
     pub name: String, // Human-readable network name.
     pub description: Option<String>, // Optional details about this network.
+    pub price_per_unit: Option<u64>, // Price per compute unit (defaults to 100 if not specified).
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

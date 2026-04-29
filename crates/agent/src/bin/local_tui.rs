@@ -19,14 +19,44 @@ use std::io::{self, Stdout};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 
+use serde::Deserialize;
+
+#[derive(Clone, Debug, Deserialize)]
+struct ProviderSettlementView {
+    provider_settlement_id: String,
+    job_id: String,
+    provider_wallet: String,
+    network_id: String,
+    units_earned: i64,
+    amount_tokens: i64,
+    tx_hash: Option<String>,
+    tx_status: Option<String>,
+    created_at_epoch_secs: i64,
+}
+
+#[derive(Clone, Debug)]
+struct PortfolioSnapshot {
+    provider_wallet: String,
+    settlement_count: usize,
+    total_amount_tokens: i64,
+    recent_settlements: Vec<ProviderSettlementView>,
+}
+
 struct Snapshot {
     healthy: bool,
     state: Option<AgentStateResponse>,
+    provider_wallet: Option<String>,
+    portfolio: Option<PortfolioSnapshot>,
     errors: Vec<String>,
     fetched_at_epoch: u64,
 }
 
-async fn fetch_snapshot(client: &Client, base_url: &str) -> Snapshot {
+async fn fetch_snapshot(
+    client: &Client,
+    base_url: &str,
+    orchestrator_url: Option<&str>,
+    provider_wallet: Option<&str>,
+) -> Snapshot {
     let mut errors = Vec::new();
 
     let health_url = format!("{}/health", base_url);
@@ -46,6 +76,19 @@ async fn fetch_snapshot(client: &Client, base_url: &str) -> Snapshot {
         }
     };
 
+    let portfolio = match (orchestrator_url, provider_wallet) {
+        (Some(orchestrator_base_url), Some(wallet)) if !wallet.trim().is_empty() => {
+            match fetch_provider_portfolio(client, orchestrator_base_url, wallet).await {
+                Ok(portfolio) => Some(portfolio),
+                Err(err) => {
+                    errors.push(err);
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
     let fetched_at_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -54,9 +97,43 @@ async fn fetch_snapshot(client: &Client, base_url: &str) -> Snapshot {
     Snapshot {
         healthy,
         state,
+        provider_wallet: provider_wallet.map(|value| value.to_string()),
+        portfolio,
         errors,
         fetched_at_epoch,
     }
+}
+
+async fn fetch_provider_portfolio(
+    client: &Client,
+    orchestrator_base_url: &str,
+    provider_wallet: &str,
+) -> Result<PortfolioSnapshot, String> {
+    let url = format!(
+        "{}/providers/{}/settlements",
+        orchestrator_base_url.trim_end_matches('/'),
+        provider_wallet
+    );
+
+    let settlements = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|err| format!("GET /providers/{}/settlements failed: {}", provider_wallet, err))?
+        .error_for_status()
+        .map_err(|err| format!("provider settlements request failed: {}", err))?
+        .json::<Vec<ProviderSettlementView>>()
+        .await
+        .map_err(|err| format!("parse provider settlements JSON failed: {}", err))?;
+
+    let total_amount_tokens = settlements.iter().map(|settlement| settlement.amount_tokens).sum();
+
+    Ok(PortfolioSnapshot {
+        provider_wallet: provider_wallet.to_string(),
+        settlement_count: settlements.len(),
+        total_amount_tokens,
+        recent_settlements: settlements.into_iter().take(4).collect(),
+    })
 }
 
 async fn fetch_json<T>(client: &Client, base_url: &str, path: &str) -> Result<T, String>
@@ -101,6 +178,132 @@ fn node_status_label(status: &NodeStatus) -> &'static str {
     }
 }
 
+fn format_tokens(value: i64) -> String {
+    let negative = value.is_negative();
+    let digits = value.abs().to_string();
+    let mut grouped = String::new();
+
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index != 0 && index % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(ch);
+    }
+
+    let mut formatted = grouped.chars().rev().collect::<String>();
+    if negative {
+        formatted.insert(0, '-');
+    }
+
+    format!("{} tokens", formatted)
+}
+
+fn short_wallet(wallet: &str) -> String {
+    if wallet.len() <= 12 {
+        wallet.to_string()
+    } else {
+        format!("{}…{}", &wallet[..6], &wallet[wallet.len().saturating_sub(4)..])
+    }
+}
+
+fn short_text(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let shortened: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}…", shortened)
+    } else {
+        shortened
+    }
+}
+
+fn render_portfolio_card(area: Rect, frame: &mut Frame<'_>, portfolio: Option<&PortfolioSnapshot>, provider_wallet: Option<&str>) {
+    let mut lines = Vec::new();
+
+    match provider_wallet {
+        Some(wallet) => {
+            lines.push(Line::from(vec![
+                Span::styled("wallet ", Style::default().fg(Color::DarkGray)),
+                Span::styled(wallet.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+            ]));
+        }
+        None => {
+            lines.push(Line::from(vec![
+                Span::styled("wallet ", Style::default().fg(Color::DarkGray)),
+                Span::styled("(not set)", Style::default().fg(Color::Yellow)),
+            ]));
+        }
+    }
+
+    match portfolio {
+        Some(portfolio) => {
+            lines.push(Line::from(vec![
+                Span::styled("earned ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format_tokens(portfolio.total_amount_tokens),
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("settlements ", Style::default().fg(Color::DarkGray)),
+                Span::raw(portfolio.settlement_count.to_string()),
+            ]));
+
+            if portfolio.recent_settlements.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("recent ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("none yet", Style::default().fg(Color::Yellow)),
+                ]));
+            } else {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled("recent payouts", Style::default().fg(Color::DarkGray)),
+                ]));
+
+                for settlement in &portfolio.recent_settlements {
+                    let status = settlement
+                        .tx_status
+                        .clone()
+                        .unwrap_or_else(|| "pending".to_string());
+                    let tx = settlement
+                        .tx_hash
+                        .clone()
+                        .map(|value| short_wallet(&value))
+                        .unwrap_or_else(|| "no tx".to_string());
+
+                    lines.push(Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::DarkGray)),
+                        Span::raw(short_text(&settlement.job_id, 12)),
+                        Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(format_tokens(settlement.amount_tokens), Style::default().fg(Color::Cyan)),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(status, Style::default().fg(Color::Yellow)),
+                        Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(tx, Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+            }
+        }
+        None => {
+            lines.push(Line::from(vec![
+                Span::styled("earned ", Style::default().fg(Color::DarkGray)),
+                Span::styled("--", Style::default().fg(Color::Yellow)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("status ", Style::default().fg(Color::DarkGray)),
+                Span::raw("set PROVIDER_WALLET and ORCHESTRATOR_URL to load portfolio"),
+            ]));
+        }
+    }
+
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(Block::default().borders(Borders::ALL).title("Portfolio"))
+        .wrap(Wrap { trim: true });
+
+    frame.render_widget(paragraph, area);
+}
+
 fn compact_chunk(chunk: &RunningChunkView) -> Vec<Line<'static>> {
     let mut container_id = chunk.container_id.clone();
     if container_id.len() > 16 {
@@ -140,6 +343,16 @@ fn render_header(area: Rect, frame: &mut Frame<'_>, snapshot: &Snapshot, base_ur
             Span::raw(base_url.to_string()),
             Span::styled("   refresh ", Style::default().fg(Color::DarkGray)),
             Span::raw(snapshot.fetched_at_epoch.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("wallet ", Style::default().fg(Color::DarkGray)),
+            Span::raw(
+                snapshot
+                    .provider_wallet
+                    .as_deref()
+                    .map(short_wallet)
+                    .unwrap_or_else(|| "(not set)".to_string()),
+            ),
         ]),
         Line::from(vec![
             Span::styled("controls ", Style::default().fg(Color::DarkGray)),
@@ -229,10 +442,16 @@ fn render_metric_cards(area: Rect, frame: &mut Frame<'_>, state: &AgentStateResp
     frame.render_widget(disk_card, columns[2]);
 }
 
-fn render_status_area(area: Rect, frame: &mut Frame<'_>, state: &AgentStateResponse) {
+fn render_status_area(
+    area: Rect,
+    frame: &mut Frame<'_>,
+    state: &AgentStateResponse,
+    portfolio: Option<&PortfolioSnapshot>,
+    provider_wallet: Option<&str>,
+) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .constraints([Constraint::Percentage(36), Constraint::Percentage(34), Constraint::Percentage(30)])
         .split(area);
 
     let summary = Paragraph::new(Text::from(vec![
@@ -298,6 +517,7 @@ fn render_status_area(area: Rect, frame: &mut Frame<'_>, state: &AgentStateRespo
 
     frame.render_widget(summary, chunks[0]);
     frame.render_widget(chunks_list, chunks[1]);
+    render_portfolio_card(chunks[2], frame, portfolio, provider_wallet);
 }
 
 fn render_errors(area: Rect, frame: &mut Frame<'_>, errors: &[String]) {
@@ -337,7 +557,13 @@ fn render_dashboard(frame: &mut Frame<'_>, snapshot: &Snapshot, base_url: &str) 
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(7), Constraint::Length(7)])
             .split(outer[2]);
-        render_status_area(body[0], frame, state);
+        render_status_area(
+            body[0],
+            frame,
+            state,
+            snapshot.portfolio.as_ref(),
+            snapshot.provider_wallet.as_deref(),
+        );
         render_errors(body[1], frame, &snapshot.errors);
     } else {
         let body = Layout::default()
@@ -394,11 +620,28 @@ fn should_exit() -> io::Result<bool> {
 async fn main() -> io::Result<()> {
     let base_url = env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8090".to_string());
     let base_url = base_url.trim_end_matches('/').to_string();
+    let orchestrator_url = env::var("ORCHESTRATOR_URL")
+        .or_else(|_| env::var("ORCHESTRATOR_BASE_URL"))
+        .ok();
+    let provider_wallet = env::var("PROVIDER_WALLET").ok().and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
     let client = Client::new();
     let mut terminal = setup_terminal()?;
 
     let run_result = loop {
-        let snapshot = fetch_snapshot(&client, &base_url).await;
+        let snapshot = fetch_snapshot(
+            &client,
+            &base_url,
+            orchestrator_url.as_deref(),
+            provider_wallet.as_deref(),
+        )
+        .await;
         terminal.draw(|frame| render_dashboard(frame, &snapshot, &base_url))?;
 
         if should_exit()? {

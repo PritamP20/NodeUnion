@@ -286,6 +286,11 @@ fn main() -> anyhow::Result<()> {
         "ORCHESTRATOR_NETWORK_DESCRIPTION",
         "",
     );
+    let managed_network_price_per_unit = prompt(
+        "ORCHESTRATOR_NETWORK_PRICE_PER_UNIT (tokens per compute unit)",
+        "ORCHESTRATOR_NETWORK_PRICE_PER_UNIT",
+        "100",
+    );
     let orchestrator_public_url = prompt(
         "ORCHESTRATOR_PUBLIC_URL (optional explicit public URL; leave blank for auto)",
         "ORCHESTRATOR_PUBLIC_URL",
@@ -326,6 +331,7 @@ fn main() -> anyhow::Result<()> {
         ("ORCHESTRATOR_NETWORK_ID", managed_network_id),
         ("ORCHESTRATOR_NETWORK_NAME", managed_network_name),
         ("ORCHESTRATOR_NETWORK_DESCRIPTION", managed_network_description),
+        ("ORCHESTRATOR_NETWORK_PRICE_PER_UNIT", managed_network_price_per_unit),
         ("ORCHESTRATOR_PUBLIC_URL", orchestrator_public_url),
         ("ORCHESTRATOR_PUBLIC_URL_PROVIDER", orchestrator_public_url_provider),
     ];
