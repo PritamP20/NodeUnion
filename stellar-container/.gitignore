@@ -1,0 +1,10 @@
+target/
+Cargo.lock
+**/*.swp
+**/*.swo
+*.iml
+.idea/
+.DS_Store
+.env
+.env.local
+*.wasm

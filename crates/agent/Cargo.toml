@@ -1,0 +1,40 @@
+[package]
+name = "nodeunion-agent"
+version = "0.1.5"
+edition = "2021"
+description = "NodeUnion provider agent daemon"
+license = "MIT"
+readme = "README.md"
+autobins = false
+
+[[bin]]
+name = "nodeunion-agent"
+path = "src/main.rs"
+
+[[bin]]
+name = "nodeunion-agent-local-tui"
+path = "src/bin/local_tui.rs"
+
+[[bin]]
+name = "nodeunion-agent-launch-tui"
+path = "src/bin/launch_tui.rs"
+
+[[bin]]
+name = "nodeunion-agent-quickstart"
+path = "src/bin/quickstart.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+bollard = "0.17"
+crossterm = "0.28"
+futures-util = "0.3"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+ratatui = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.30"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }

@@ -1,0 +1,10 @@
+[build]
+target = "wasm32-unknown-unknown"
+
+[dev-server]
+enabled = true
+
+[rpc]
+server_url = "http://localhost:8000"
+network_passphrase = "Test SDF Network ; September 2015"
+network_id = "test"

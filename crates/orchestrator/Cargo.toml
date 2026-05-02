@@ -1,0 +1,46 @@
+[package]
+name = "nodeunion-orchestrator"
+version = "0.1.7"
+edition = "2021"
+description = "NodeUnion orchestration backend"
+license = "MIT"
+readme = "README.md"
+autobins = false
+
+[[bin]]
+name = "nodeunion-orchestrator"
+path = "src/main.rs"
+
+[[bin]]
+name = "nodeunion-orchestrator-local-tui"
+path = "src/bin/local_tui.rs"
+
+[[bin]]
+name = "nodeunion-orchestrator-launch-tui"
+path = "src/bin/launch_tui.rs"
+
+[[bin]]
+name = "nodeunion-orchestrator-user-tui"
+path = "src/bin/user_tui.rs"
+
+[[bin]]
+name = "nodeunion-orchestrator-db-migrate"
+path = "src/bin/db_migrate.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+crossterm = "0.28"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+ratatui = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "macros"] }
+dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+borsh = "1"
+sha2 = "0.10"
+solana-client = "2"
+solana-sdk = "2"
+uuid = { version = "1", features = ["v4"] }

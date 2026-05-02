@@ -1,0 +1,13 @@
+[workspace]
+members = ["contracts/nodeunion_billing"]
+resolver = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+overflow-checks = true
+
+[profile.test]
+opt-level = "z"

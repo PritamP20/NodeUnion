@@ -1,0 +1,61 @@
+[Unit]
+Description=NodeUnion Agent Daemon
+Documentation=https://github.com/NodeUnion/agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# User and group to run the daemon as
+# Create with: useradd --system --shell /bin/false --home-dir /run/agent agent
+User=agent
+Group=agent
+
+# Binary and working directory
+ExecStart=/opt/nodeunion/agent/bin/agent
+WorkingDirectory=/opt/nodeunion/agent
+
+# Load environment variables from /etc/nodeunion/agent/.env
+EnvironmentFile=/etc/nodeunion/agent/.env
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=3
+
+# Timeout for clean shutdown
+TimeoutStopSec=30
+
+# Resource limits (soft limits are defaults, adjust as needed)
+# Limit memory to 512MB to prevent daemon runaway consuming resources
+MemoryLimit=512M
+
+# CPU quota: 50% of one core
+CPUQuota=50%
+
+# Limit open file descriptors
+LimitNOFILE=16384
+
+# Security restrictions
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/nodeunion
+
+# Allow CAP_SYS_ADMIN for Docker communication
+# If using Docker socket, ensure proper permissions on /var/run/docker.sock
+AmbientCapabilities=CAP_SYS_ADMIN
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nodeunion-agent
+
+# Keep running even if multiple restart attempts fail
+# (use `systemctl reset-failed` to clear failure count)
+
+[Install]
+WantedBy=multi-user.target

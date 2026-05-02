@@ -1,0 +1,7 @@
+/target
+/test-ledger/
+/solana/.anchor/test-ledger/
+TEST_RESULTS.md
+LOCAL_DEPLOYMENT.md
+TUI_CONFIGURATION
+.env
